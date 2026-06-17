@@ -1,0 +1,98 @@
+{
+  "project_info": {
+    "project_number": "100021036305",
+    "project_id": "fitness-booking-app-23bdc",
+    "storage_bucket": "fitness-booking-app-23bdc.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:100021036305:android:f1eb4a0f7afe91fd1298b0",
+        "android_client_info": {
+          "package_name": "com.example.fitness_booking"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "100021036305-tuf2ebifcah6k6l1dprvmvqseul013je.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.fitness_booking",
+            "certificate_hash": "e08cd50aa6a7d3a6b8e063209b34d420edd5ee87"
+          }
+        },
+        {
+          "client_id": "100021036305-a5kic50251dh99t0ti77duprrivac2m4.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBsvkxnGTAqRLOUteLEtMdFZ1x1Uj0aXKU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "100021036305-a5kic50251dh99t0ti77duprrivac2m4.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "100021036305-mjnvnpt3m9b6a00ouf9cmb1fi5vuhk9i.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.fitnessBooking"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:100021036305:android:31baaa3de970ac251298b0",
+        "android_client_info": {
+          "package_name": "com.fitness.booking"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "100021036305-cpts28b430ohcrbokkuai95hbnddkdlq.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.fitness.booking",
+            "certificate_hash": "e08cd50aa6a7d3a6b8e063209b34d420edd5ee87"
+          }
+        },
+        {
+          "client_id": "100021036305-a5kic50251dh99t0ti77duprrivac2m4.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBsvkxnGTAqRLOUteLEtMdFZ1x1Uj0aXKU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "100021036305-a5kic50251dh99t0ti77duprrivac2m4.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "100021036305-mjnvnpt3m9b6a00ouf9cmb1fi5vuhk9i.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.fitnessBooking"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
