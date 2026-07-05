@@ -2,15 +2,26 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_stripe/flutter_stripe.dart';
 import 'services/notifications.dart';
+import 'services/user_service.dart';
 import 'firebase_options.dart';
 import 'utils/app_colors.dart';
+import 'models/user_model.dart';
 import 'navigation/bottom_navigation.dart';
 import 'screens/login/login_screen.dart';
+
+// ── Stripe publishable key ────────────────────────────────────────────────────
+// Safe to include in client code. Swap pk_test_ → pk_live_ for production.
+// Get yours from: https://dashboard.stripe.com/test/apikeys
+const _stripePublishableKey =
+    'pk_test_51Tps5X5GDQ6NbhM7JIa90Yh2ce52faber57nbE9GJB4kZFS7QpxjF4nWO0RxNmWcs8kPNWAFX4vG2WcGKt5irYzu00nf4mQiQu';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  Stripe.publishableKey = _stripePublishableKey;
+  await Stripe.instance.applySettings();
   await NotificationService.initialize();
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
@@ -129,18 +140,38 @@ class FitnessBookingApp extends StatelessWidget {
       ),
       home: StreamBuilder<User?>(
         stream: FirebaseAuth.instance.authStateChanges(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Scaffold(
-              backgroundColor: AppColors.bg,
-              body: Center(
-                child: CircularProgressIndicator(color: AppColors.primary),
-              ),
-            );
+        builder: (context, authSnap) {
+          if (authSnap.connectionState == ConnectionState.waiting) {
+            return const _Splash();
           }
-          if (snapshot.hasData) return const BottomNav();
-          return const LoginScreen();
+          if (!authSnap.hasData) return const LoginScreen();
+
+          // Load user role before showing navigation
+          return StreamBuilder<UserModel?>(
+            stream: UserService.currentUserStream(),
+            builder: (context, userSnap) {
+              if (userSnap.connectionState == ConnectionState.waiting) {
+                return const _Splash();
+              }
+              final user = userSnap.data;
+              return BottomNav(userModel: user);
+            },
+          );
         },
+      ),
+    );
+  }
+}
+
+class _Splash extends StatelessWidget {
+  const _Splash();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      backgroundColor: AppColors.bg,
+      body: Center(
+        child: CircularProgressIndicator(color: AppColors.primary),
       ),
     );
   }

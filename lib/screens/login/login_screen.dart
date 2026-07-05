@@ -14,6 +14,12 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   bool _loading = false;
 
+  // Emails that always get super_admin on first login.
+  // Remove or clear this list when going to production.
+  static const _superAdminEmails = <String>[
+    'msaratkumar3@gmail.com',
+  ];
+
   Future<void> _signInWithGoogle() async {
     setState(() => _loading = true);
     try {
@@ -29,18 +35,40 @@ class _LoginScreenState extends State<LoginScreen> {
       );
       final result =
           await FirebaseAuth.instance.signInWithCredential(credential);
-      await FirebaseFirestore.instance
-          .collection("users")
-          .doc(result.user!.uid)
-          .set({
-        "email": result.user!.email ?? "",
-        "name": result.user!.displayName ?? "",
-      }, SetOptions(merge: true));
+      final uid = result.user!.uid;
+      final email = result.user!.email ?? '';
+
+      final userRef =
+          FirebaseFirestore.instance.collection('users').doc(uid);
+      final existing = await userRef.get();
+
+      if (!existing.exists) {
+        // First-ever login for this account — assign role
+        final isSuperAdmin = _superAdminEmails.contains(email);
+        await userRef.set({
+          'email': email,
+          'name': result.user!.displayName ?? '',
+          'photoUrl': result.user!.photoURL ?? '',
+          'role': isSuperAdmin ? 'admin' : 'client',
+          if (isSuperAdmin) 'adminLevel': 'super_admin',
+          if (isSuperAdmin)
+            'adminPermissions': <String>[],
+          'credits': 0,
+          'memberships': <Map<String, dynamic>>[],
+        });
+      } else {
+        // Update mutable profile fields only; preserve role/credits
+        await userRef.set({
+          'email': email,
+          'name': result.user!.displayName ?? '',
+          if ((result.user!.photoURL ?? '').isNotEmpty)
+            'photoUrl': result.user!.photoURL,
+        }, SetOptions(merge: true));
+      }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.toString())),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(e.toString())));
       }
     }
     if (mounted) setState(() => _loading = false);

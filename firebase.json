@@ -1,1 +1,37 @@
-{"flutter":{"platforms":{"android":{"default":{"projectId":"fitness-booking-app-23bdc","appId":"1:100021036305:android:f1eb4a0f7afe91fd1298b0","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"fitness-booking-app-23bdc","configurations":{"android":"1:100021036305:android:f1eb4a0f7afe91fd1298b0","ios":"1:100021036305:ios:d99f7bf0e0265f151298b0","macos":"1:100021036305:ios:d99f7bf0e0265f151298b0","web":"1:100021036305:web:e4f9d3a3509a31cf1298b0","windows":"1:100021036305:web:5dbde833ebd394ee1298b0"}}}}}}
+{
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log"
+      ]
+    }
+  ],
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "fitness-booking-app-23bdc",
+          "appId": "1:100021036305:android:f1eb4a0f7afe91fd1298b0",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "fitness-booking-app-23bdc",
+          "configurations": {
+            "android": "1:100021036305:android:f1eb4a0f7afe91fd1298b0",
+            "ios": "1:100021036305:ios:d99f7bf0e0265f151298b0",
+            "macos": "1:100021036305:ios:d99f7bf0e0265f151298b0",
+            "web": "1:100021036305:web:e4f9d3a3509a31cf1298b0",
+            "windows": "1:100021036305:web:5dbde833ebd394ee1298b0"
+          }
+        }
+      }
+    }
+  }
+}
