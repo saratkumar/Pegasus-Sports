@@ -34,6 +34,26 @@ class NotificationService {
     priority: Priority.high,
   );
 
+  static const _adminChannel = AndroidNotificationDetails(
+    'admin_requests',
+    'Admin Requests',
+    channelDescription: 'New requests from trainers',
+    importance: Importance.max,
+    priority: Priority.high,
+  );
+
+  static Future<void> showNewAdminRequest(String requestType) async {
+    final title = requestType == 'slot_increase'
+        ? 'New Slot Increase Request'
+        : 'New Credit Request';
+    await notifications.show(
+      DateTime.now().millisecondsSinceEpoch.remainder(100000),
+      title,
+      'Check the Requests section in admin panel',
+      const NotificationDetails(android: _adminChannel),
+    );
+  }
+
   static Future<void> showBookingConfirmed(String className) async {
     await notifications.show(
       DateTime.now().millisecondsSinceEpoch.remainder(100000),

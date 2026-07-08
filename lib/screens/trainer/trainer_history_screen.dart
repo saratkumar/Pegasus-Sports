@@ -2,7 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../../models/class_model.dart';
 import '../../models/user_model.dart';
-import '../../services/google_sheet_service.dart';
+import '../../services/class_service.dart';
 import '../../services/user_service.dart';
 import '../../utils/app_colors.dart';
 
@@ -31,7 +31,7 @@ class _TrainerHistoryScreenState extends State<TrainerHistoryScreen> {
   Future<void> _loadData() async {
     final results = await Future.wait([
       UserService.getCurrentUser(),
-      GoogleSheetService.getClasses(),
+      ClassService.getClasses(),
     ]);
     if (!mounted) return;
 
@@ -221,23 +221,24 @@ class _SessionCard extends StatelessWidget {
               ],
             ),
           ),
-          // Enrollment badge (from Firestore)
+          // Enrollment badge (from Firestore) — filter by date in Dart to avoid composite index
           FutureBuilder<QuerySnapshot>(
-            future: () {
+            future: FirebaseFirestore.instance
+                .collection('bookings')
+                .where('classId', isEqualTo: cls.effectiveId)
+                .get(),
+            builder: (_, snap) {
               final start = DateTime(
                   session.date.year, session.date.month, session.date.day);
               final end = start.add(const Duration(days: 1));
-              return FirebaseFirestore.instance
-                  .collection('bookings')
-                  .where('classId', isEqualTo: cls.effectiveId)
-                  .where('bookingDate',
-                      isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-                  .where('bookingDate', isLessThan: Timestamp.fromDate(end))
-                  .where('status', isNotEqualTo: 'cancelled_by_trainer')
-                  .get();
-            }(),
-            builder: (_, snap) {
-              final count = snap.data?.docs.length ?? 0;
+              final count = snap.data?.docs.where((d) {
+                    if (d['status'] == 'cancelled_by_trainer') return false;
+                    final bd = d['bookingDate'];
+                    if (bd == null) return false;
+                    final dt = (bd as Timestamp).toDate();
+                    return !dt.isBefore(start) && dt.isBefore(end);
+                  }).length ??
+                  0;
               return Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(

@@ -5,8 +5,8 @@ import '../../models/class_model.dart';
 import '../../models/admin_request_model.dart';
 import '../../models/user_model.dart';
 import '../../services/class_service.dart';
-import '../../services/google_sheet_service.dart';
 import '../../services/user_service.dart';
+import '../../services/notifications.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
 
@@ -36,7 +36,7 @@ class _TrainerHomeScreenState extends State<TrainerHomeScreen> {
   Future<void> _loadData() async {
     final results = await Future.wait([
       UserService.getCurrentUser(),
-      GoogleSheetService.getClasses(),
+      ClassService.getClasses(),
     ]);
     if (!mounted) return;
     setState(() {
@@ -140,15 +140,20 @@ class _TrainerHomeScreenState extends State<TrainerHomeScreen> {
 
     final start = DateTime(_selectedDate.year, _selectedDate.month, _selectedDate.day);
     final end = start.add(const Duration(days: 1));
-    final snap = await FirebaseFirestore.instance
+    // Query by classId only — filter date in Dart to avoid composite index
+    final allSnap = await FirebaseFirestore.instance
         .collection('bookings')
         .where('classId', isEqualTo: cls.effectiveId)
-        .where('bookingDate', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-        .where('bookingDate', isLessThan: Timestamp.fromDate(end))
         .get();
+    final todayDocs = allSnap.docs.where((d) {
+      final bd = d['bookingDate'];
+      if (bd == null) return false;
+      final dt = (bd as Timestamp).toDate();
+      return !dt.isBefore(start) && dt.isBefore(end);
+    }).toList();
 
     final batch = FirebaseFirestore.instance.batch();
-    for (final doc in snap.docs) {
+    for (final doc in todayDocs) {
       batch.update(doc.reference, {'status': 'cancelled_by_trainer'});
       final uid = doc['userId'] as String?;
       final credits = (doc.data()['creditsUsed'] as int?) ?? 1;
@@ -216,6 +221,7 @@ class _TrainerHomeScreenState extends State<TrainerHomeScreen> {
         createdAt: DateTime.now(),
       ).toFirestore(),
     );
+    await NotificationService.showNewAdminRequest('slot_increase');
     if (mounted) AppToast.success(context, 'Slot increase request sent to admin');
   }
 
@@ -267,6 +273,7 @@ class _TrainerHomeScreenState extends State<TrainerHomeScreen> {
             createdAt: DateTime.now(),
           ).toFirestore(),
         );
+        await NotificationService.showNewAdminRequest('credit_request');
         if (mounted) {
           AppToast.success(context, 'Credit request sent to admin for ${selected.name}');
         }

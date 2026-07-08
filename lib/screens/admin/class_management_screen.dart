@@ -1,45 +1,21 @@
 import 'package:flutter/material.dart';
 import '../../models/class_model.dart';
 import '../../models/user_model.dart';
-import '../../services/config_service.dart';
-import '../../services/google_sheet_service.dart';
-import '../../services/user_service.dart';
+import '../../services/class_service.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
 
-class ClassManagementScreen extends StatefulWidget {
+class ClassManagementScreen extends StatelessWidget {
   const ClassManagementScreen({super.key});
 
-  @override
-  State<ClassManagementScreen> createState() => _ClassManagementScreenState();
-}
-
-class _ClassManagementScreenState extends State<ClassManagementScreen> {
-  late Future<List<ClassModel>> _future;
-
-  @override
-  void initState() {
-    super.initState();
-    _reload();
-  }
-
-  void _reload() {
-    if (!mounted) return;
-    setState(() {
-      _future = GoogleSheetService.getClasses();
-    });
-  }
-
-  Future<void> _openForm(ClassModel? existing) async {
-    final saved = await Navigator.push<bool>(
+  Future<void> _openForm(BuildContext context, [ClassModel? existing]) async {
+    await Navigator.push(
       context,
-      MaterialPageRoute(
-          builder: (_) => _ClassFormScreen(existing: existing)),
+      MaterialPageRoute(builder: (_) => _ClassFormScreen(existing: existing)),
     );
-    if (saved == true && mounted) _reload();
   }
 
-  Future<void> _delete(ClassModel cls) async {
+  Future<void> _delete(BuildContext context, ClassModel cls) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -49,7 +25,7 @@ class _ClassManagementScreenState extends State<ClassManagementScreen> {
             style: TextStyle(
                 color: AppColors.textPrimary, fontWeight: FontWeight.w700)),
         content: const Text(
-            'This will remove the class from the sheet. Existing bookings are unaffected.',
+            'This will permanently remove the class. Existing bookings are unaffected.',
             style: TextStyle(color: AppColors.textSecondary)),
         actions: [
           TextButton(
@@ -66,10 +42,8 @@ class _ClassManagementScreenState extends State<ClassManagementScreen> {
       ),
     );
     if (ok == true) {
-      final key = '${cls.day}|${cls.mode}|${cls.startTime}';
-      await ConfigService.deleteClass(key);
-      if (mounted) AppToast.success(context, 'Class deleted');
-      _reload();
+      await ClassService.deleteClass(cls.id!);
+      if (context.mounted) AppToast.success(context, 'Class deleted');
     }
   }
 
@@ -78,21 +52,19 @@ class _ClassManagementScreenState extends State<ClassManagementScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Classes')),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _openForm(null),
+        onPressed: () => _openForm(context),
         backgroundColor: AppColors.primary,
         foregroundColor: Colors.white,
         icon: const Icon(Icons.add),
         label: const Text('Add Class'),
       ),
-      body: FutureBuilder<List<ClassModel>>(
-        future: _future,
+      body: StreamBuilder<List<ClassModel>>(
+        stream: ClassService.streamClasses(),
         builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
+          if (snap.connectionState == ConnectionState.waiting &&
+              !snap.hasData) {
             return const Center(
                 child: CircularProgressIndicator(color: AppColors.primary));
-          }
-          if (snap.hasError) {
-            return Center(child: Text('Error: ${snap.error}'));
           }
           final classes = snap.data ?? [];
           if (classes.isEmpty) {
@@ -108,7 +80,7 @@ class _ClassManagementScreenState extends State<ClassManagementScreen> {
                           color: AppColors.textSecondary, fontSize: 15)),
                   const SizedBox(height: 8),
                   ElevatedButton.icon(
-                    onPressed: () => _openForm(null),
+                    onPressed: () => _openForm(context),
                     icon: const Icon(Icons.add),
                     label: const Text('Add First Class'),
                   ),
@@ -117,12 +89,12 @@ class _ClassManagementScreenState extends State<ClassManagementScreen> {
             );
           }
           return ListView.builder(
-            padding: const EdgeInsets.all(14),
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 100),
             itemCount: classes.length,
-            itemBuilder: (context, i) => _ClassCard(
+            itemBuilder: (ctx, i) => _ClassCard(
               cls: classes[i],
-              onEdit: () => _openForm(classes[i]),
-              onDelete: () => _delete(classes[i]),
+              onEdit: () => _openForm(context, classes[i]),
+              onDelete: () => _delete(context, classes[i]),
             ),
           );
         },
@@ -146,19 +118,18 @@ class _ClassCard extends StatelessWidget {
     'Thursday': 'Thu', 'Friday': 'Fri', 'Saturday': 'Sat', 'Sunday': 'Sun',
   };
   static const _ordered = [
-    'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'
+    'Monday', 'Tuesday', 'Wednesday', 'Thursday',
+    'Friday', 'Saturday', 'Sunday'
   ];
 
   static String _formatDay(String day, String occurrence) {
-    if (occurrence == 'daily') return 'Every day';
-    if (occurrence == 'once') return 'Once';
-    if (occurrence == 'monthly') return 'Monthly';
+    if (occurrence == 'daily') { return 'Every day'; }
+    if (occurrence == 'once') { return 'Once'; }
+    if (occurrence == 'monthly') { return 'Monthly'; }
     final days = day.split(',').map((d) => d.trim()).where((d) => d.isNotEmpty).toSet();
     if (days.length == 7) { return 'Every day'; }
-    if (days.length == 5 &&
-        !days.contains('Saturday') && !days.contains('Sunday')) { return 'Weekdays'; }
-    if (days.length == 2 &&
-        days.contains('Saturday') && days.contains('Sunday')) { return 'Weekends'; }
+    if (days.length == 5 && !days.contains('Saturday') && !days.contains('Sunday')) { return 'Weekdays'; }
+    if (days.length == 2 && days.contains('Saturday') && days.contains('Sunday')) { return 'Weekends'; }
     final sorted = _ordered.where(days.contains).map((d) => _abbr[d] ?? d).toList();
     return sorted.isEmpty ? day : sorted.join(', ');
   }
@@ -191,30 +162,28 @@ class _ClassCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(cls.mode,
-                          style: const TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.textPrimary)),
+                Row(children: [
+                  Expanded(
+                    child: Text(cls.mode,
+                        style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.textPrimary)),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
                     ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: AppColors.primary.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(cls.type,
-                          style: const TextStyle(
-                              fontSize: 10,
-                              color: AppColors.primary,
-                              fontWeight: FontWeight.w600)),
-                    ),
-                  ],
-                ),
+                    child: Text(cls.type,
+                        style: const TextStyle(
+                            fontSize: 10,
+                            color: AppColors.primary,
+                            fontWeight: FontWeight.w600)),
+                  ),
+                ]),
                 const SizedBox(height: 4),
                 Text(
                     '${_formatDay(cls.day, cls.occurrence)} · ${cls.startTime} · ${cls.duration} · Cap: ${cls.groupSize}',
@@ -226,22 +195,20 @@ class _ClassCard extends StatelessWidget {
               ],
             ),
           ),
-          Column(
-            children: [
-              IconButton(
-                icon: const Icon(Icons.edit_outlined,
-                    color: AppColors.primary, size: 20),
-                onPressed: onEdit,
-                tooltip: 'Edit',
-              ),
-              IconButton(
-                icon: const Icon(Icons.delete_outline,
-                    color: AppColors.error, size: 20),
-                onPressed: onDelete,
-                tooltip: 'Delete',
-              ),
-            ],
-          ),
+          Column(children: [
+            IconButton(
+              icon: const Icon(Icons.edit_outlined,
+                  color: AppColors.primary, size: 20),
+              onPressed: onEdit,
+              tooltip: 'Edit',
+            ),
+            IconButton(
+              icon: const Icon(Icons.delete_outline,
+                  color: AppColors.error, size: 20),
+              onPressed: onDelete,
+              tooltip: 'Delete',
+            ),
+          ]),
         ],
       ),
     );
@@ -261,38 +228,28 @@ class _ClassFormScreen extends StatefulWidget {
 class _ClassFormScreenState extends State<_ClassFormScreen> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _mode;
-  late final TextEditingController _location;
-  late final TextEditingController _detailLocation;
-  late final TextEditingController _groupSize;
-  late final TextEditingController _duration;
   late final TextEditingController _startTime;
-  late final TextEditingController _image;
+  late final TextEditingController _duration;
+  late final TextEditingController _groupSize;
+  late final TextEditingController _location;
 
-  Set<String> _selectedDays = {'Monday'};
-  String _type = 'Fitness';
-  String _occurrence = 'weekly';
-  DateTime? _specificDate;
-  bool _saving = false;
-
-  // Dropdowns loaded async
-  List<Map<String, String>> _facilities = [];
-  List<UserModel> _trainers = [];
-  List<Map<String, String>> _typeItems = [];
-  Map<String, String> _typeImages = {};
-  List<String> _dynamicTypes = [];
+  String _type = '';
   String? _selectedFacilityId;
   String? _selectedCoach;
+  String _occurrence = 'weekly';
+  Set<String> _selectedDays = {'Monday'};
+  DateTime? _specificDate;
+  bool _saving = false;
   bool _loadingData = true;
-  // true while image was auto-filled from type mapping (allows override)
-  bool _imageAutoSet = false;
+
+  List<Map<String, dynamic>> _facilities = [];
+  List<Map<String, dynamic>> _types = [];
+  List<UserModel> _coaches = [];
+  Map<String, String> _typeImages = {};
 
   static const _weekdayOrder = [
     'Monday', 'Tuesday', 'Wednesday', 'Thursday',
-    'Friday', 'Saturday', 'Sunday'
-  ];
-  // Fallback types used only when the Types sheet is empty
-  static const _fallbackTypes = [
-    'Fitness', 'Boxing', 'Yoga', 'Group PT', 'Muay Thai', 'Kids'
+    'Friday', 'Saturday', 'Sunday',
   ];
 
   @override
@@ -300,20 +257,21 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
     super.initState();
     final e = widget.existing;
     _mode = TextEditingController(text: e?.mode ?? '');
-    _location = TextEditingController(text: e?.location ?? '');
-    _detailLocation = TextEditingController(text: e?.detailLocation ?? '');
-    _groupSize = TextEditingController(text: e?.groupSize ?? '');
-    _duration = TextEditingController(text: e?.duration ?? '');
     _startTime = TextEditingController(text: e?.startTime ?? '');
-    _image = TextEditingController(text: e?.image ?? '');
-    _type = e?.type ?? 'Fitness';
+    _duration = TextEditingController(text: e?.duration ?? '');
+    _groupSize = TextEditingController(text: e?.groupSize ?? '');
+    _location = TextEditingController(text: e?.location ?? '');
     _occurrence = e?.occurrence ?? 'weekly';
+    _selectedFacilityId = e?.facilityId;
+    _selectedCoach = e?.coach.isNotEmpty == true ? e!.coach : null;
     if (e != null && e.day.isNotEmpty) {
-      final parsed = e.day.split(',').map((d) => d.trim()).where((d) => d.isNotEmpty).toSet();
+      final parsed = e.day
+          .split(',')
+          .map((d) => d.trim())
+          .where((d) => d.isNotEmpty)
+          .toSet();
       _selectedDays = parsed.isEmpty ? {'Monday'} : parsed;
     }
-    _selectedFacilityId = e?.facilityId;
-    _selectedCoach = (e?.coach.isNotEmpty ?? false) ? e!.coach : null;
     if (e?.specificDate != null) {
       final parts = e!.specificDate!.split('-');
       if (parts.length == 3) {
@@ -327,72 +285,64 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
   Future<void> _loadData() async {
     try {
       final results = await Future.wait([
-        ConfigService.getFacilities(),
-        UserService.getUsersByRole('trainer'),
-        ConfigService.getTypes(),
+        ClassService.getFacilities(),
+        ClassService.getClassTypes(),
+        ClassService.getCoaches(),
       ]);
       if (!mounted) return;
+      final facilities = results[0] as List<Map<String, dynamic>>;
+      final types = results[1] as List<Map<String, dynamic>>;
+      final coaches = results[2] as List<UserModel>;
+
+      final typeImages = Map.fromEntries(
+        types.map((t) => MapEntry(
+            t['name']?.toString() ?? '', t['imageUrl']?.toString() ?? '')),
+      );
+
+      // Determine initial type
+      final existingType = widget.existing?.type ?? '';
+      String initialType;
+      if (existingType.isNotEmpty &&
+          types.any((t) => t['name'] == existingType)) {
+        initialType = existingType;
+      } else {
+        initialType = types.isNotEmpty
+            ? (types.first['name']?.toString() ?? '')
+            : '';
+      }
+
       setState(() {
-        _facilities = results[0] as List<Map<String, String>>;
-        _trainers = results[1] as List<UserModel>;
-        _typeItems = results[2] as List<Map<String, String>>;
-        _typeImages = Map.fromEntries(
-          _typeItems.map((t) => MapEntry(t['name'] ?? '', t['imageUrl'] ?? '')),
-        );
-        _dynamicTypes = _typeItems.map((t) => t['name'] ?? '').toList();
-        if (_dynamicTypes.isEmpty) _dynamicTypes = List.of(_fallbackTypes);
-        // Ensure current _type is valid in the loaded list
-        if (!_dynamicTypes.contains(_type) && _dynamicTypes.isNotEmpty) {
-          _type = _dynamicTypes.first;
-        }
+        _facilities = facilities;
+        _types = types;
+        _coaches = coaches;
+        _typeImages = typeImages;
+        _type = initialType;
         _loadingData = false;
       });
     } catch (_) {
-      if (mounted) {
-        setState(() {
-          _dynamicTypes = List.of(_fallbackTypes);
-          _loadingData = false;
-        });
-      }
+      if (mounted) setState(() => _loadingData = false);
     }
   }
 
   @override
   void dispose() {
-    for (final c in [
-      _mode, _location, _detailLocation,
-      _groupSize, _duration, _startTime, _image
-    ]) {
-      c.dispose();
-    }
+    _mode.dispose();
+    _startTime.dispose();
+    _duration.dispose();
+    _groupSize.dispose();
+    _location.dispose();
     super.dispose();
-  }
-
-  void _onTypeChanged(String? v) {
-    if (v == null) return;
-    setState(() {
-      _type = v;
-      final url = _typeImages[v];
-      if (url != null && url.isNotEmpty) {
-        _image.text = url;
-        _imageAutoSet = true;
-      } else if (_imageAutoSet) {
-        // Clear previously auto-set image if new type has no mapping
-        _image.text = '';
-        _imageAutoSet = false;
-      }
-    });
   }
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
-    // _selectedCoach is set from Autocomplete onSelected or onChanged (typing)
     final coachName = (_selectedCoach ?? '').trim();
     if (coachName.isEmpty) {
-      AppToast.error(context, 'Please enter a coach name');
+      AppToast.error(context, 'Please select a coach');
       return;
     }
-    // Build day string based on occurrence
+
+    // Build day value
     final String dayValue;
     if (_occurrence == 'weekly') {
       final sorted = _weekdayOrder.where(_selectedDays.contains).toList();
@@ -409,51 +359,52 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
 
     setState(() => _saving = true);
 
-    // Resolve facility name for location label if a facility is selected
-    String locationLabel = _location.text.trim();
-    String detailLabel = _detailLocation.text.trim();
-    if (_selectedFacilityId != null && _facilities.isNotEmpty) {
-      final fac = _facilities.firstWhere(
-          (f) => f['id'] == _selectedFacilityId,
-          orElse: () => {});
-      if (fac.isNotEmpty) {
-        if (locationLabel.isEmpty) locationLabel = fac['name'] ?? locationLabel;
-        if (detailLabel.isEmpty) detailLabel = fac['address'] ?? detailLabel;
-      }
-    }
+    // Resolve location from facility or manual field
+    final fac = _selectedFacilityId != null
+        ? _facilities.firstWhere(
+            (f) => f['id'] == _selectedFacilityId,
+            orElse: () => {})
+        : {};
+    final locationLabel = fac.isNotEmpty
+        ? (fac['name']?.toString() ?? _location.text.trim())
+        : _location.text.trim();
+    final detailLabel = fac.isNotEmpty
+        ? (fac['address']?.toString() ?? '')
+        : '';
 
-    final fields = {
-      'day': dayValue,
-      'mode': _mode.text.trim(),
-      'coach': coachName,
-      'location': locationLabel,
-      'groupSize': _groupSize.text.trim(),
-      'duration': _duration.text.trim(),
-      'detailLocation': detailLabel,
-      'startTime': _startTime.text.trim(),
-      'type': _type,
-      'image': _image.text.trim(),
-      'occurrence': _occurrence,
-      'facilityId': _selectedFacilityId ?? '',
-      'specificDate': _specificDate != null
-          ? '${_specificDate!.year}-'
-              '${_specificDate!.month.toString().padLeft(2, '0')}-'
-              '${_specificDate!.day.toString().padLeft(2, '0')}'
-          : '',
-    };
+    final specificDateStr = _specificDate != null
+        ? '${_specificDate!.year}-'
+            '${_specificDate!.month.toString().padLeft(2, '0')}-'
+            '${_specificDate!.day.toString().padLeft(2, '0')}'
+        : null;
+
+    final cls = ClassModel(
+      id: widget.existing?.id,
+      day: dayValue,
+      mode: _mode.text.trim(),
+      coach: coachName,
+      location: locationLabel,
+      facilityId: _selectedFacilityId,
+      groupSize: _groupSize.text.trim(),
+      duration: _duration.text.trim(),
+      detailLocation: detailLabel,
+      startTime: _startTime.text.trim(),
+      type: _type,
+      image: _typeImages[_type] ?? '',
+      occurrence: _occurrence,
+      specificDate: specificDateStr,
+    );
 
     try {
-      if (widget.existing == null) {
-        await ConfigService.addClass(fields);
+      if (widget.existing?.id != null) {
+        await ClassService.updateClass(widget.existing!.id!, cls);
       } else {
-        final e = widget.existing!;
-        final originalKey = '${e.day}|${e.mode}|${e.startTime}';
-        await ConfigService.updateClass(originalKey, fields);
+        await ClassService.createClass(cls);
       }
       if (mounted) {
-        Navigator.pop(context, true);
+        Navigator.pop(context);
         AppToast.success(context,
-            widget.existing == null ? 'Class added to sheet' : 'Class updated');
+            widget.existing == null ? 'Class created' : 'Class updated');
       }
     } catch (err) {
       setState(() => _saving = false);
@@ -465,8 +416,7 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-          title: Text(
-              widget.existing == null ? 'New Class' : 'Edit Class')),
+          title: Text(widget.existing == null ? 'New Class' : 'Edit Class')),
       body: _loadingData
           ? const Center(
               child: CircularProgressIndicator(color: AppColors.primary))
@@ -477,16 +427,19 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
                 children: [
                   _field(_mode, 'Class Name', required: true),
                   const SizedBox(height: 12),
-                  // Type dropdown — also auto-fills image
-                  _dropdown('Type', _dynamicTypes, _type, _onTypeChanged),
+                  _typeDropdown(),
                   const SizedBox(height: 12),
-                  // Facility dropdown from Google Sheet
+                  _coachDropdown(),
+                  const SizedBox(height: 12),
                   _facilityDropdown(),
                   const SizedBox(height: 12),
-                  // Coach autocomplete from Firestore trainers (free-text allowed)
-                  _coachField(),
-                  const SizedBox(height: 12),
-                  _field(_startTime, 'Start Time (e.g. 6:30 AM)',
+                  // Manual location — hidden if facility auto-fills it
+                  if (_selectedFacilityId == null)
+                    Column(children: [
+                      _field(_location, 'Location (optional)'),
+                      const SizedBox(height: 12),
+                    ]),
+                  _field(_startTime, 'Start Time (e.g. 7:00 PM)',
                       required: true),
                   const SizedBox(height: 12),
                   _field(_duration, 'Duration (e.g. 60 mins)', required: true),
@@ -494,14 +447,6 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
                   _field(_groupSize, 'Capacity',
                       required: true,
                       keyboardType: TextInputType.number),
-                  const SizedBox(height: 12),
-                  _field(_location, 'Short Location Label (optional — auto-fills from facility)'),
-                  const SizedBox(height: 12),
-                  _field(_detailLocation,
-                      'Detail Address (optional — auto-fills from facility)'),
-                  const SizedBox(height: 12),
-                  // Image — shows auto-set hint when mapped from type
-                  _imageField(),
                   const SizedBox(height: 16),
                   const Text('Occurrence',
                       style: TextStyle(
@@ -524,17 +469,14 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
                           setState(() => _selectedDays = days),
                     )
                   else if (_occurrence == 'daily')
-                    const Row(
-                      children: [
-                        Icon(Icons.info_outline,
-                            size: 14, color: AppColors.textMuted),
-                        SizedBox(width: 6),
-                        Text('Runs every day',
-                            style: TextStyle(
-                                fontSize: 12,
-                                color: AppColors.textMuted)),
-                      ],
-                    )
+                    const Row(children: [
+                      Icon(Icons.info_outline,
+                          size: 14, color: AppColors.textMuted),
+                      SizedBox(width: 6),
+                      Text('Runs every day',
+                          style: TextStyle(
+                              fontSize: 12, color: AppColors.textMuted)),
+                    ])
                   else
                     _datePicker(),
                   const SizedBox(height: 24),
@@ -556,26 +498,96 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
     );
   }
 
-  // ── Sub-widgets ────────────────────────────────────────────────────────────
+  // ── Sub-widgets ──────────────────────────────────────────────────────────
+
+  Widget _typeDropdown() {
+    if (_types.isEmpty) {
+      return TextFormField(
+        enabled: false,
+        decoration: InputDecoration(
+          labelText: 'Type (add types in Class Types screen first)',
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        ),
+      );
+    }
+    return DropdownButtonFormField<String>(
+      initialValue: _type.isNotEmpty ? _type : null,
+      decoration: InputDecoration(
+        labelText: 'Type',
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      ),
+      items: _types
+          .map((t) => DropdownMenuItem(
+                value: t['name']?.toString() ?? '',
+                child: Text(t['name']?.toString() ?? ''),
+              ))
+          .toList(),
+      onChanged: (v) => setState(() => _type = v ?? _type),
+      validator: (v) =>
+          (v == null || v.isEmpty) ? 'Select a type' : null,
+    );
+  }
+
+  Widget _coachDropdown() {
+    // Build items — include existing coach name if it's not in the list
+    final names = _coaches.map((c) => c.name).where((n) => n.isNotEmpty).toList();
+    if (_selectedCoach != null &&
+        _selectedCoach!.isNotEmpty &&
+        !names.contains(_selectedCoach)) {
+      names.insert(0, _selectedCoach!);
+    }
+    if (names.isEmpty) {
+      return TextFormField(
+        enabled: false,
+        decoration: InputDecoration(
+          labelText: 'Coach (no trainers or admins found in Firestore)',
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        ),
+      );
+    }
+    return DropdownButtonFormField<String>(
+      initialValue: (_selectedCoach != null && names.contains(_selectedCoach))
+          ? _selectedCoach
+          : null,
+      decoration: InputDecoration(
+        labelText: 'Coach',
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        prefixIcon: const Icon(Icons.person_outline,
+            size: 18, color: AppColors.textMuted),
+      ),
+      items: names
+          .map((n) => DropdownMenuItem(value: n, child: Text(n)))
+          .toList(),
+      onChanged: (v) => setState(() => _selectedCoach = v),
+      validator: (v) =>
+          (v == null || v.isEmpty) ? 'Select a coach' : null,
+    );
+  }
 
   Widget _facilityDropdown() {
     if (_facilities.isEmpty) {
       return TextFormField(
         enabled: false,
         decoration: InputDecoration(
-          labelText: 'Facility (add Facilities tab to Google Sheet)',
+          labelText: 'Facility (add in Facilities screen first)',
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
           contentPadding:
               const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          suffixIcon:
-              const Icon(Icons.info_outline, size: 16, color: AppColors.textMuted),
         ),
       );
     }
     return DropdownButtonFormField<String>(
       initialValue: _selectedFacilityId,
       decoration: InputDecoration(
-        labelText: 'Facility',
+        labelText: 'Facility (optional)',
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -583,8 +595,8 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
       items: [
         const DropdownMenuItem(value: null, child: Text('— None —')),
         ..._facilities.map((f) => DropdownMenuItem(
-              value: f['id'],
-              child: Text(f['name'] ?? f['id'] ?? ''),
+              value: f['id']?.toString(),
+              child: Text(f['name']?.toString() ?? ''),
             )),
       ],
       onChanged: (v) {
@@ -592,135 +604,10 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
         if (v == null) return;
         final fac = _facilities.firstWhere(
             (f) => f['id'] == v, orElse: () => {});
-        if (fac.isNotEmpty) {
-          if (_location.text.trim().isEmpty) {
-            _location.text = fac['name'] ?? '';
-          }
-          if (_detailLocation.text.trim().isEmpty) {
-            _detailLocation.text = fac['address'] ?? '';
-          }
+        if (fac.isNotEmpty && _location.text.trim().isEmpty) {
+          _location.text = fac['name']?.toString() ?? '';
         }
       },
-    );
-  }
-
-  // Autocomplete that suggests registered trainers but allows typing any name freely.
-  // This works even when no trainers are in Firestore yet.
-  Widget _coachField() {
-    final trainerNames =
-        _trainers.map((t) => t.name).where((n) => n.isNotEmpty).toList();
-
-    return Autocomplete<String>(
-      initialValue: TextEditingValue(text: _selectedCoach ?? ''),
-      optionsBuilder: (TextEditingValue v) {
-        final q = v.text.toLowerCase();
-        if (q.isEmpty) return trainerNames;
-        return trainerNames.where((n) => n.toLowerCase().contains(q));
-      },
-      onSelected: (name) => setState(() => _selectedCoach = name),
-      fieldViewBuilder: (ctx, ctrl, focusNode, onSubmitted) {
-        // Pre-fill when editing an existing class
-        if (ctrl.text.isEmpty && (_selectedCoach?.isNotEmpty ?? false)) {
-          ctrl.text = _selectedCoach!;
-        }
-        return TextFormField(
-          controller: ctrl,
-          focusNode: focusNode,
-          onChanged: (v) => _selectedCoach = v.trim(),
-          decoration: InputDecoration(
-            labelText: 'Coach',
-            hintText: trainerNames.isEmpty
-                ? 'Type coach name (must match Classes sheet)'
-                : 'Select from registered trainers or type',
-            border:
-                OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            suffixIcon: trainerNames.isNotEmpty
-                ? const Icon(Icons.arrow_drop_down,
-                    color: AppColors.textMuted)
-                : const Tooltip(
-                    message:
-                        'No trainers in Firestore yet — type a name manually',
-                    child: Icon(Icons.info_outline,
-                        size: 18, color: AppColors.textMuted),
-                  ),
-          ),
-          validator: (v) =>
-              (v == null || v.trim().isEmpty) ? 'Coach name is required' : null,
-        );
-      },
-      optionsViewBuilder: (ctx, onSelected, options) => Align(
-        alignment: Alignment.topLeft,
-        child: Material(
-          elevation: 6,
-          color: AppColors.card,
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12)),
-          child: ConstrainedBox(
-            constraints:
-                const BoxConstraints(maxHeight: 220, maxWidth: 380),
-            child: ListView.builder(
-              shrinkWrap: true,
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              itemCount: options.length,
-              itemBuilder: (_, i) {
-                final name = options.elementAt(i);
-                return ListTile(
-                  dense: true,
-                  leading: CircleAvatar(
-                    radius: 14,
-                    backgroundColor:
-                        const Color(0xFF00D4AA).withValues(alpha: 0.15),
-                    child: Text(
-                      name.isNotEmpty ? name[0].toUpperCase() : '?',
-                      style: const TextStyle(
-                          fontSize: 12,
-                          color: Color(0xFF00D4AA),
-                          fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                  title: Text(name,
-                      style:
-                          const TextStyle(color: AppColors.textPrimary)),
-                  subtitle: const Text('Registered trainer',
-                      style: TextStyle(
-                          fontSize: 10, color: AppColors.textMuted)),
-                  onTap: () => onSelected(name),
-                );
-              },
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _imageField() {
-    return Stack(
-      children: [
-        TextFormField(
-          controller: _image,
-          onChanged: (_) => setState(() => _imageAutoSet = false),
-          decoration: InputDecoration(
-            labelText: 'Image URL',
-            hintText: _typeImages.containsKey(_type)
-                ? 'Auto-filled from type — tap to override'
-                : 'https://...',
-            border:
-                OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            suffixIcon: _imageAutoSet
-                ? const Tooltip(
-                    message: 'Auto-set from type mapping',
-                    child: Icon(Icons.auto_awesome,
-                        size: 16, color: AppColors.primary),
-                  )
-                : null,
-          ),
-        ),
-      ],
     );
   }
 
@@ -732,20 +619,11 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
           initialDate: _specificDate ?? DateTime.now(),
           firstDate: DateTime(2020),
           lastDate: DateTime(2030),
-          builder: (context, child) => Theme(
-            data: Theme.of(context).copyWith(
-              colorScheme: const ColorScheme.light(
-                primary: AppColors.primary,
-              ),
-            ),
-            child: child!,
-          ),
         );
         if (picked != null) setState(() => _specificDate = picked);
       },
       child: Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
         decoration: BoxDecoration(
           border: Border.all(
               color: _specificDate == null
@@ -753,28 +631,24 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
                   : AppColors.divider),
           borderRadius: BorderRadius.circular(10),
         ),
-        child: Row(
-          children: [
-            const Icon(Icons.calendar_today_outlined,
-                size: 16, color: AppColors.textMuted),
-            const SizedBox(width: 10),
-            Text(
-              _specificDate == null
-                  ? _occurrence == 'once'
-                      ? 'Pick the class date *'
-                      : 'Pick reference date (sets week-of-month) *'
-                  : '${_specificDate!.day}/'
-                      '${_specificDate!.month}/'
-                      '${_specificDate!.year}',
-              style: TextStyle(
-                color: _specificDate == null
-                    ? AppColors.textMuted
-                    : AppColors.textPrimary,
-                fontSize: 14,
-              ),
+        child: Row(children: [
+          const Icon(Icons.calendar_today_outlined,
+              size: 16, color: AppColors.textMuted),
+          const SizedBox(width: 10),
+          Text(
+            _specificDate == null
+                ? (_occurrence == 'once'
+                    ? 'Pick the class date *'
+                    : 'Pick reference date *')
+                : '${_specificDate!.day}/${_specificDate!.month}/${_specificDate!.year}',
+            style: TextStyle(
+              color: _specificDate == null
+                  ? AppColors.textMuted
+                  : AppColors.textPrimary,
+              fontSize: 14,
             ),
-          ],
-        ),
+          ),
+        ]),
       ),
     );
   }
@@ -799,23 +673,6 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
           : null,
     );
   }
-
-  Widget _dropdown(String label, List<String> items, String value,
-      ValueChanged<String?> onChanged) {
-    return DropdownButtonFormField<String>(
-      initialValue: value,
-      decoration: InputDecoration(
-        labelText: label,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      ),
-      items: items
-          .map((s) => DropdownMenuItem(value: s, child: Text(s)))
-          .toList(),
-      onChanged: onChanged,
-    );
-  }
 }
 
 // ── Week-day multi-selector ───────────────────────────────────────────────────
@@ -837,13 +694,11 @@ class _WeekDayPicker extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Repeat on',
-          style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textSecondary),
-        ),
+        const Text('Repeat on',
+            style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textSecondary)),
         const SizedBox(height: 8),
         Row(
           children: List.generate(7, (i) {
@@ -868,21 +723,18 @@ class _WeekDayPicker extends StatelessWidget {
                     color: sel ? AppColors.primary : AppColors.surface,
                     borderRadius: BorderRadius.circular(10),
                     border: Border.all(
-                      color: sel
-                          ? AppColors.primary
-                          : AppColors.divider,
+                      color: sel ? AppColors.primary : AppColors.divider,
                       width: sel ? 1.5 : 1,
                     ),
                   ),
-                  child: Text(
-                    lbl,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                      color: sel ? Colors.white : AppColors.textSecondary,
-                    ),
-                  ),
+                  child: Text(lbl,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        color:
+                            sel ? Colors.white : AppColors.textSecondary,
+                      )),
                 ),
               ),
             );
@@ -891,10 +743,8 @@ class _WeekDayPicker extends StatelessWidget {
         if (selected.isEmpty)
           const Padding(
             padding: EdgeInsets.only(top: 4),
-            child: Text(
-              'Select at least one day',
-              style: TextStyle(fontSize: 11, color: AppColors.error),
-            ),
+            child: Text('Select at least one day',
+                style: TextStyle(fontSize: 11, color: AppColors.error)),
           ),
       ],
     );
@@ -907,8 +757,7 @@ class _OccurrencePicker extends StatelessWidget {
   final String value;
   final ValueChanged<String> onChanged;
 
-  const _OccurrencePicker(
-      {required this.value, required this.onChanged});
+  const _OccurrencePicker({required this.value, required this.onChanged});
 
   static const _options = [
     ('weekly', Icons.repeat, 'Weekly'),
@@ -946,22 +795,19 @@ class _OccurrencePicker extends StatelessWidget {
                 children: [
                   Icon(icon,
                       size: 18,
-                      color: selected
-                          ? AppColors.primary
-                          : AppColors.textMuted),
+                      color:
+                          selected ? AppColors.primary : AppColors.textMuted),
                   const SizedBox(height: 4),
-                  Text(
-                    label,
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: selected
-                          ? FontWeight.w700
-                          : FontWeight.w400,
-                      color: selected
-                          ? AppColors.primary
-                          : AppColors.textSecondary,
-                    ),
-                  ),
+                  Text(label,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: selected
+                            ? FontWeight.w700
+                            : FontWeight.w400,
+                        color: selected
+                            ? AppColors.primary
+                            : AppColors.textSecondary,
+                      )),
                 ],
               ),
             ),

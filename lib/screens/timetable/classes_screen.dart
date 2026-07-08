@@ -5,7 +5,6 @@ import 'package:cached_network_image/cached_network_image.dart';
 
 import '../../models/class_model.dart';
 import '../../services/class_service.dart';
-import '../../services/google_sheet_service.dart';
 import '../../services/user_service.dart';
 import '../../services/waiting_list_service.dart';
 import '../../services/email_service.dart';
@@ -95,91 +94,102 @@ class _ClassesScreenState extends State<ClassesScreen> {
     final uid = FirebaseAuth.instance.currentUser!.uid;
     final classId = cls.effectiveId;
 
-    // Duplicate check
-    final existing = await FirebaseFirestore.instance
-        .collection('bookings')
-        .where('userId', isEqualTo: uid)
-        .where('classId', isEqualTo: classId)
-        .get();
+    try {
+      // Duplicate check — no date range in Firestore to avoid composite index; filter in Dart
+      final existingSnap = await FirebaseFirestore.instance
+          .collection('bookings')
+          .where('userId', isEqualTo: uid)
+          .where('classId', isEqualTo: classId)
+          .get();
 
-    final alreadyBookedToday = existing.docs.any((d) {
-      final bd = d['bookingDate'];
-      if (bd == null) return false;
-      final dt = (bd as Timestamp).toDate();
-      return dt.year == _selectedDate.year &&
-          dt.month == _selectedDate.month &&
-          dt.day == _selectedDate.day;
-    });
+      final alreadyBooked = existingSnap.docs.any((d) {
+        final bd = d['bookingDate'];
+        if (bd == null) return false;
+        final dt = (bd as Timestamp).toDate();
+        return dt.year == _selectedDate.year &&
+            dt.month == _selectedDate.month &&
+            dt.day == _selectedDate.day;
+      });
 
-    if (alreadyBookedToday) {
-      if (context.mounted) {
-        AppToast.warning(context, "Already registered for ${cls.mode}");
+      if (alreadyBooked) {
+        if (context.mounted) {
+          AppToast.warning(context, "Already registered for ${cls.mode}");
+        }
+        return;
       }
-      return;
-    }
 
-    // Check credits
-    final hasCredits = await UserService.hasEnoughCredits(uid);
-    if (!hasCredits) {
-      if (context.mounted) {
-        AppToast.error(context, "No credits — purchase a membership plan first");
+      // Credit check + capacity check in parallel
+      final results = await Future.wait([
+        UserService.hasEnoughCredits(uid),
+        ClassService.getBookingCount(classId, _selectedDate),
+      ]);
+
+      final hasCredits = results[0] as bool;
+      final booked = results[1] as int;
+
+      if (!hasCredits) {
+        if (context.mounted) {
+          AppToast.error(
+              context, "No credits — purchase a membership plan first");
+        }
+        return;
       }
-      return;
-    }
 
-    // Check capacity
-    final booked = await ClassService.getBookingCount(classId, _selectedDate);
-    final capacity = int.tryParse(cls.groupSize) ?? 0;
-    final isFull = capacity > 0 && booked >= capacity;
-
-    if (isFull) {
-      if (context.mounted) {
-        AppToast.error(context, "Class is full");
+      final capacity = int.tryParse(cls.groupSize) ?? 0;
+      if (capacity > 0 && booked >= capacity) {
+        if (context.mounted) {
+          AppToast.error(context, "Class is full");
+        }
+        return;
       }
-      return;
-    }
 
-    // Create booking
-    await FirebaseFirestore.instance.collection('bookings').add({
-      'userId': uid,
-      'classId': classId,
-      'displayName': cls.mode,
-      'bookingType': 'class',
-      'bookingDay': _selectedDayName,
-      'bookingDate': Timestamp.fromDate(_selectedDate),
-      'bookingTime': cls.startTime,
-      'createdAt': Timestamp.now(),
-      'bookedBy': uid,
-      'bookedByRole': 'client',
-      'creditsUsed': 1,
-    });
+      // Create booking
+      await FirebaseFirestore.instance.collection('bookings').add({
+        'userId': uid,
+        'classId': classId,
+        'displayName': cls.mode,
+        'bookingType': 'class',
+        'bookingDay': _selectedDayName,
+        'bookingDate': Timestamp.fromDate(_selectedDate),
+        'bookingTime': cls.startTime,
+        'createdAt': Timestamp.now(),
+        'bookedBy': uid,
+        'bookedByRole': 'client',
+        'creditsUsed': 1,
+      });
 
-    await UserService.deductCredit(uid);
+      await UserService.deductCredit(uid);
 
-    final userDoc = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(uid)
-        .get();
-    final email =
-        FirebaseAuth.instance.currentUser?.email?.isNotEmpty == true
-            ? FirebaseAuth.instance.currentUser!.email!
-            : (userDoc.data()?['email']?.toString() ?? '');
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .get();
+      final email =
+          FirebaseAuth.instance.currentUser?.email?.isNotEmpty == true
+              ? FirebaseAuth.instance.currentUser!.email!
+              : (userDoc.data()?['email']?.toString() ?? '');
 
-    if (email.isNotEmpty) {
-      await EmailService.sendBookingEmail(
-        email: email,
-        className: cls.mode,
-        classTime: cls.startTime,
-      );
-    }
+      if (email.isNotEmpty) {
+        await EmailService.sendBookingEmail(
+          email: email,
+          className: cls.mode,
+          classTime: cls.startTime,
+        );
+      }
 
-    await NotificationService.showBookingConfirmed(cls.mode);
-    await NotificationService.scheduleClassNotifications(
-        cls.mode, _selectedDate, cls.startTime);
+      await NotificationService.showBookingConfirmed(cls.mode);
+      await NotificationService.scheduleClassNotifications(
+          cls.mode, _selectedDate, cls.startTime);
 
-    if (context.mounted) {
-      AppToast.success(
-          context, '${cls.mode} booked for ${_formatDate(_selectedDate)}');
+      if (context.mounted) {
+        AppToast.success(
+            context, '${cls.mode} booked for ${_formatDate(_selectedDate)}');
+      }
+    } catch (e, st) {
+      debugPrint('Booking error: $e\n$st');
+      if (context.mounted) {
+        AppToast.error(context, 'Booking failed: ${e.toString()}');
+      }
     }
   }
 
@@ -294,23 +304,23 @@ class _ClassesScreenState extends State<ClassesScreen> {
         children: [
           _DateBar(label: _formatDate(_selectedDate), onTap: _pickDate),
           Expanded(
-            child: FutureBuilder<List<ClassModel>>(
-              future: GoogleSheetService.getClasses(),
+            child: StreamBuilder<List<ClassModel>>(
+              stream: ClassService.streamClasses(),
               builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
+                if (snapshot.connectionState == ConnectionState.waiting &&
+                    !snapshot.hasData) {
                   return const Center(
                       child: CircularProgressIndicator(color: AppColors.primary));
                 }
-                if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                  return _emptyState("No classes available");
-                }
-
-                final classes = snapshot.data!
+                final all = snapshot.data ?? [];
+                final classes = all
                     .where((c) => _matchesDate(c, _selectedDate))
                     .toList();
 
                 if (classes.isEmpty) {
-                  return _emptyState("No classes on $_selectedDayName");
+                  return _emptyState(all.isEmpty
+                      ? 'No classes available'
+                      : 'No classes on $_selectedDayName');
                 }
 
                 return ListView.builder(
@@ -518,7 +528,7 @@ class _ClassCard extends StatelessWidget {
 
 // ── Capacity section — streams booking count live ────────────────────────────
 
-class _CapacitySection extends StatelessWidget {
+class _CapacitySection extends StatefulWidget {
   final String classId;
   final String groupSize;
   final DateTime selectedDate;
@@ -534,28 +544,52 @@ class _CapacitySection extends StatelessWidget {
   });
 
   @override
+  State<_CapacitySection> createState() => _CapacitySectionState();
+}
+
+class _CapacitySectionState extends State<_CapacitySection> {
+  bool _booking = false;
+
+  Future<void> _handleBook() async {
+    if (_booking) return;
+    setState(() => _booking = true);
+    try {
+      await widget.onBook(context);
+    } finally {
+      if (mounted) setState(() => _booking = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final startOfDay =
-        DateTime(selectedDate.year, selectedDate.month, selectedDate.day);
+    final startOfDay = DateTime(
+        widget.selectedDate.year, widget.selectedDate.month, widget.selectedDate.day);
     final endOfDay = startOfDay.add(const Duration(days: 1));
 
+    // Query by classId only — Dart-side date filter avoids composite index requirement
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('bookings')
-          .where('classId', isEqualTo: classId)
-          .where('bookingDate',
-              isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay))
-          .where('bookingDate', isLessThan: Timestamp.fromDate(endOfDay))
+          .where('classId', isEqualTo: widget.classId)
           .snapshots(),
       builder: (context, snap) {
-        final booked = snap.data?.docs.length ?? 0;
-        final capacity = int.tryParse(groupSize) ?? 0;
+        final allDocs = snap.data?.docs ?? [];
+        final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+        final todayDocs = allDocs.where((d) {
+          final bd = d['bookingDate'];
+          if (bd == null) return false;
+          final dt = (bd as Timestamp).toDate();
+          return !dt.isBefore(startOfDay) && dt.isBefore(endOfDay);
+        }).toList();
+        final booked = todayDocs.length;
+        final alreadyBooked = todayDocs.any((d) => d['userId'] == currentUid);
+        final capacity = int.tryParse(widget.groupSize) ?? 0;
         final isFull = capacity > 0 && booked >= capacity;
-        final pct =
-            capacity > 0 ? (booked / capacity).clamp(0.0, 1.0) : 0.0;
+        final pct = capacity > 0 ? (booked / capacity).clamp(0.0, 1.0) : 0.0;
 
         return FutureBuilder<int>(
-          future: WaitingListService.getWaitingCount(classId, selectedDate),
+          future: WaitingListService.getWaitingCount(
+              widget.classId, widget.selectedDate),
           builder: (context, waitSnap) {
             final waiting = waitSnap.data ?? 0;
 
@@ -605,19 +639,39 @@ class _CapacitySection extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 14),
-                if (!isFull)
+                if (alreadyBooked)
                   SizedBox(
                     width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: () => onBook(context),
-                      child: const Text('Book Now'),
+                    child: ElevatedButton.icon(
+                      onPressed: null,
+                      icon: const Icon(Icons.check_circle_outline, size: 18),
+                      label: const Text('Already Booked'),
+                      style: ElevatedButton.styleFrom(
+                        disabledBackgroundColor:
+                            const Color(0xFF00D4AA).withValues(alpha: 0.15),
+                        disabledForegroundColor: const Color(0xFF00D4AA),
+                      ),
                     ),
-                  ),
-                if (isFull) ...[
+                  )
+                else if (!isFull)
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
-                      onPressed: () => onJoinWaitingList(context),
+                      onPressed: _booking ? null : _handleBook,
+                      child: _booking
+                          ? const SizedBox(
+                              height: 18,
+                              width: 18,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: Colors.white))
+                          : const Text('Book Now'),
+                    ),
+                  )
+                else ...[
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () => widget.onJoinWaitingList(context),
                       style: ElevatedButton.styleFrom(
                         backgroundColor:
                             const Color(0xFFFFAB40).withValues(alpha: 0.15),

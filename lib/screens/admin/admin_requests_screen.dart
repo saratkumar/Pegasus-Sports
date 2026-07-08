@@ -65,18 +65,22 @@ class _RequestList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Query query = FirebaseFirestore.instance
-        .collection('adminRequests')
-        .orderBy('createdAt', descending: true);
-
-    if (statusFilter != null) {
-      query = query.where('status', isEqualTo: statusFilter);
-    }
+    // When filtering by status, skip orderBy to avoid a composite index —
+    // sort by createdAt in Dart instead.
+    final stream = statusFilter != null
+        ? FirebaseFirestore.instance
+            .collection('adminRequests')
+            .where('status', isEqualTo: statusFilter)
+            .snapshots()
+        : FirebaseFirestore.instance
+            .collection('adminRequests')
+            .orderBy('createdAt', descending: true)
+            .snapshots();
 
     return StreamBuilder<QuerySnapshot>(
-      stream: query.snapshots(),
+      stream: stream,
       builder: (context, snap) {
-        if (snap.connectionState == ConnectionState.waiting) {
+        if (snap.connectionState == ConnectionState.waiting && !snap.hasData) {
           return const Center(
               child: CircularProgressIndicator(color: AppColors.primary));
         }
@@ -86,6 +90,12 @@ class _RequestList extends StatelessWidget {
               .where((d) => (d['status'] as String?) != 'pending')
               .toList();
         }
+        // Sort newest-first in Dart
+        docs.sort((a, b) {
+          final ta = (a['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0;
+          final tb = (b['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0;
+          return tb.compareTo(ta);
+        });
         if (docs.isEmpty) {
           return const Center(
             child: Text('No requests',

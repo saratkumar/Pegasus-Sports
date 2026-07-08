@@ -1,43 +1,22 @@
 import 'package:flutter/material.dart';
-import '../../services/config_service.dart';
+import '../../services/class_service.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
 
-class FacilityManagementScreen extends StatefulWidget {
+class FacilityManagementScreen extends StatelessWidget {
   const FacilityManagementScreen({super.key});
 
-  @override
-  State<FacilityManagementScreen> createState() =>
-      _FacilityManagementScreenState();
-}
-
-class _FacilityManagementScreenState
-    extends State<FacilityManagementScreen> {
-  late Future<List<Map<String, String>>> _future;
-
-  @override
-  void initState() {
-    super.initState();
-    _reload();
-  }
-
-  void _reload() {
-    if (!mounted) return;
-    setState(() {
-      _future = ConfigService.getFacilities();
-    });
-  }
-
-  Future<void> _openForm([Map<String, String>? existing]) async {
-    final saved = await Navigator.push<bool>(
+  Future<void> _openForm(BuildContext context,
+      [Map<String, dynamic>? existing]) async {
+    await Navigator.push(
       context,
       MaterialPageRoute(
           builder: (_) => _FacilityFormScreen(existing: existing)),
     );
-    if (saved == true && mounted) _reload();
   }
 
-  Future<void> _delete(Map<String, String> facility) async {
+  Future<void> _delete(
+      BuildContext context, Map<String, dynamic> facility) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -46,7 +25,8 @@ class _FacilityManagementScreenState
             RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
         title: Text('Delete "${facility['name']}"?',
             style: const TextStyle(
-                color: AppColors.textPrimary, fontWeight: FontWeight.w700)),
+                color: AppColors.textPrimary,
+                fontWeight: FontWeight.w700)),
         content: const Text('This cannot be undone.',
             style: TextStyle(color: AppColors.textSecondary)),
         actions: [
@@ -64,11 +44,8 @@ class _FacilityManagementScreenState
       ),
     );
     if (ok == true) {
-      await ConfigService.deleteFacility(facility['id']!);
-      if (mounted) {
-        AppToast.success(context, 'Facility deleted');
-        _reload();
-      }
+      await ClassService.deleteFacility(facility['id'] as String);
+      if (context.mounted) AppToast.success(context, 'Facility deleted');
     }
   }
 
@@ -77,21 +54,19 @@ class _FacilityManagementScreenState
     return Scaffold(
       appBar: AppBar(title: const Text('Facilities')),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _openForm(),
+        onPressed: () => _openForm(context),
         backgroundColor: AppColors.primary,
         foregroundColor: Colors.white,
         icon: const Icon(Icons.add),
         label: const Text('Add Facility'),
       ),
-      body: FutureBuilder<List<Map<String, String>>>(
-        future: _future,
+      body: StreamBuilder<List<Map<String, dynamic>>>(
+        stream: ClassService.streamFacilities(),
         builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
+          if (snap.connectionState == ConnectionState.waiting &&
+              !snap.hasData) {
             return const Center(
                 child: CircularProgressIndicator(color: AppColors.primary));
-          }
-          if (snap.hasError) {
-            return Center(child: Text('Error: ${snap.error}'));
           }
           final facilities = snap.data ?? [];
           if (facilities.isEmpty) {
@@ -107,7 +82,7 @@ class _FacilityManagementScreenState
                           color: AppColors.textSecondary, fontSize: 15)),
                   const SizedBox(height: 8),
                   ElevatedButton.icon(
-                    onPressed: () => _openForm(),
+                    onPressed: () => _openForm(context),
                     icon: const Icon(Icons.add),
                     label: const Text('Add First Facility'),
                   ),
@@ -120,8 +95,8 @@ class _FacilityManagementScreenState
             itemCount: facilities.length,
             itemBuilder: (_, i) => _FacilityCard(
               facility: facilities[i],
-              onEdit: () => _openForm(facilities[i]),
-              onDelete: () => _delete(facilities[i]),
+              onEdit: () => _openForm(context, facilities[i]),
+              onDelete: () => _delete(context, facilities[i]),
             ),
           );
         },
@@ -130,10 +105,8 @@ class _FacilityManagementScreenState
   }
 }
 
-// ── Facility card ─────────────────────────────────────────────────────────────
-
 class _FacilityCard extends StatelessWidget {
-  final Map<String, String> facility;
+  final Map<String, dynamic> facility;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
@@ -168,50 +141,40 @@ class _FacilityCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(facility['name'] ?? '',
+                Text(facility['name']?.toString() ?? '',
                     style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w700,
                         color: AppColors.textPrimary)),
-                const SizedBox(height: 3),
-                Text(facility['address'] ?? '',
-                    style: const TextStyle(
-                        fontSize: 12, color: AppColors.textSecondary)),
-                if ((facility['description'] ?? '').isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  Text(facility['description']!,
+                if ((facility['address']?.toString() ?? '').isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(facility['address'].toString(),
                       style: const TextStyle(
-                          fontSize: 12, color: AppColors.textMuted)),
+                          fontSize: 12, color: AppColors.textSecondary)),
                 ],
               ],
             ),
           ),
-          Column(
-            children: [
-              IconButton(
-                icon: const Icon(Icons.edit_outlined,
-                    color: AppColors.primary, size: 20),
-                onPressed: onEdit,
-                tooltip: 'Edit',
-              ),
-              IconButton(
-                icon: const Icon(Icons.delete_outline,
-                    color: AppColors.error, size: 20),
-                onPressed: onDelete,
-                tooltip: 'Delete',
-              ),
-            ],
-          ),
+          Column(children: [
+            IconButton(
+              icon: const Icon(Icons.edit_outlined,
+                  color: AppColors.primary, size: 20),
+              onPressed: onEdit,
+            ),
+            IconButton(
+              icon: const Icon(Icons.delete_outline,
+                  color: AppColors.error, size: 20),
+              onPressed: onDelete,
+            ),
+          ]),
         ],
       ),
     );
   }
 }
 
-// ── Facility form screen ──────────────────────────────────────────────────────
-
 class _FacilityFormScreen extends StatefulWidget {
-  final Map<String, String>? existing;
+  final Map<String, dynamic>? existing;
   const _FacilityFormScreen({this.existing});
 
   @override
@@ -222,23 +185,21 @@ class _FacilityFormScreenState extends State<_FacilityFormScreen> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _name;
   late final TextEditingController _address;
-  late final TextEditingController _desc;
   bool _saving = false;
 
   @override
   void initState() {
     super.initState();
-    _name = TextEditingController(text: widget.existing?['name'] ?? '');
-    _address = TextEditingController(text: widget.existing?['address'] ?? '');
-    _desc =
-        TextEditingController(text: widget.existing?['description'] ?? '');
+    _name = TextEditingController(
+        text: widget.existing?['name']?.toString() ?? '');
+    _address = TextEditingController(
+        text: widget.existing?['address']?.toString() ?? '');
   }
 
   @override
   void dispose() {
     _name.dispose();
     _address.dispose();
-    _desc.dispose();
     super.dispose();
   }
 
@@ -247,21 +208,17 @@ class _FacilityFormScreenState extends State<_FacilityFormScreen> {
     setState(() => _saving = true);
     try {
       if (widget.existing == null) {
-        await ConfigService.addFacility(
-          _name.text.trim(),
-          _address.text.trim(),
-          _desc.text.trim(),
-        );
+        await ClassService.addFacility(
+            _name.text.trim(), _address.text.trim());
       } else {
-        await ConfigService.updateFacility(
-          widget.existing!['id']!,
+        await ClassService.updateFacility(
+          widget.existing!['id'] as String,
           _name.text.trim(),
           _address.text.trim(),
-          _desc.text.trim(),
         );
       }
       if (mounted) {
-        Navigator.pop(context, true);
+        Navigator.pop(context);
         AppToast.success(context,
             widget.existing == null ? 'Facility added' : 'Facility updated');
       }
@@ -284,9 +241,7 @@ class _FacilityFormScreenState extends State<_FacilityFormScreen> {
           children: [
             _field(_name, 'Facility Name', required: true),
             const SizedBox(height: 12),
-            _field(_address, 'Address', required: true),
-            const SizedBox(height: 12),
-            _field(_desc, 'Description (optional)', maxLines: 3),
+            _field(_address, 'Address (optional)'),
             const SizedBox(height: 24),
             ElevatedButton(
               onPressed: _saving ? null : _save,
@@ -307,10 +262,9 @@ class _FacilityFormScreenState extends State<_FacilityFormScreen> {
   }
 
   Widget _field(TextEditingController ctrl, String label,
-      {bool required = false, int maxLines = 1}) {
+      {bool required = false}) {
     return TextFormField(
       controller: ctrl,
-      maxLines: maxLines,
       decoration: InputDecoration(
         labelText: label,
         border:
