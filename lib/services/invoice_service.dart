@@ -12,6 +12,47 @@ class InvoiceService {
         '-$seq';
   }
 
+  /// Variant that accepts a pre-generated [invoiceNumber] so the same number
+  /// used when writing to Firestore also appears on the emailed invoice.
+  static Future<void> processWithInvoice({
+    required String invoiceNumber,
+    required String paymentIntentId,
+    required String clientName,
+    required String clientEmail,
+    required String planName,
+    required int credits,
+    required double amount,
+    required String currency,
+  }) async {
+    final now = DateTime.now();
+    final dateStr =
+        '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    await Future.wait([
+      _recordToSheet(
+        invoiceNumber: invoiceNumber,
+        paymentIntentId: paymentIntentId,
+        clientName: clientName,
+        clientEmail: clientEmail,
+        planName: planName,
+        credits: credits,
+        amount: amount,
+        currency: currency,
+        date: dateStr,
+      ).catchError((_) {}),
+      _sendEmail(
+        invoiceNumber: invoiceNumber,
+        clientName: clientName,
+        clientEmail: clientEmail,
+        planName: planName,
+        credits: credits,
+        amount: amount,
+        currency: currency,
+        paymentIntentId: paymentIntentId,
+        date: dateStr,
+      ).catchError((_) {}),
+    ]);
+  }
+
   /// Records the transaction in the Google Sheet Transactions tab
   /// and sends an invoice email via EmailJS.
   /// Failures are caught silently so a post-payment error never blocks the user.

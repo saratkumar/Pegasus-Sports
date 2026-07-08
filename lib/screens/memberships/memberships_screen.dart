@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
@@ -144,9 +145,26 @@ class _MembershipScreenState extends State<MembershipScreen>
 
       await UserService.purchaseMembership(uid, entry);
 
-      // Record transaction in Google Sheet + send invoice email (non-blocking)
       final currentUser = FirebaseAuth.instance.currentUser;
-      InvoiceService.process(
+      final invoiceNumber = InvoiceService.generateInvoiceNumber();
+
+      // Write to Firestore transactions collection (primary source for admin UI)
+      await FirebaseFirestore.instance.collection('transactions').add({
+        'invoiceNumber': invoiceNumber,
+        'paymentIntentId': paymentIntentId,
+        'clientUid': uid,
+        'clientName': currentUser?.displayName ?? 'Member',
+        'clientEmail': currentUser?.email ?? '',
+        'planName': plan.name,
+        'credits': plan.credits,
+        'amount': plan.price,
+        'currency': 'SGD',
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      // Non-blocking: send invoice email + write to Google Sheet
+      InvoiceService.processWithInvoice(
+        invoiceNumber: invoiceNumber,
         paymentIntentId: paymentIntentId,
         clientName: currentUser?.displayName ?? 'Member',
         clientEmail: currentUser?.email ?? '',

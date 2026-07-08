@@ -1,5 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import '../../services/config_service.dart';
 import '../../utils/app_colors.dart';
 
 class TransactionsScreen extends StatefulWidget {
@@ -10,15 +10,12 @@ class TransactionsScreen extends StatefulWidget {
 }
 
 class _TransactionsScreenState extends State<TransactionsScreen> {
-  late Future<List<Map<String, String>>> _future;
   final _search = TextEditingController();
   String _query = '';
 
   @override
   void initState() {
     super.initState();
-    // Assign directly — no setState needed before the first build
-    _future = ConfigService.getTransactions();
     _search.addListener(() {
       if (!mounted) return;
       setState(() => _query = _search.text.trim().toLowerCase());
@@ -31,38 +28,32 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     super.dispose();
   }
 
-  void _reload() {
-    if (!mounted) return;
-    setState(() => _future = ConfigService.getTransactions());
-  }
-
-  List<Map<String, String>> _filter(List<Map<String, String>> rows) {
-    if (_query.isEmpty) return rows;
-    return rows.where((r) {
-      return (r['clientName'] ?? '').toLowerCase().contains(_query) ||
-          (r['clientEmail'] ?? '').toLowerCase().contains(_query) ||
-          (r['planName'] ?? '').toLowerCase().contains(_query) ||
-          (r['invoiceNumber'] ?? '').toLowerCase().contains(_query);
+  List<QueryDocumentSnapshot> _filter(List<QueryDocumentSnapshot> docs) {
+    if (_query.isEmpty) return docs;
+    return docs.where((d) {
+      final data = d.data() as Map<String, dynamic>;
+      final name = (data['clientName'] ?? '').toString().toLowerCase();
+      final email = (data['clientEmail'] ?? '').toString().toLowerCase();
+      final plan = (data['planName'] ?? '').toString().toLowerCase();
+      final inv = (data['invoiceNumber'] ?? '').toString().toLowerCase();
+      return name.contains(_query) ||
+          email.contains(_query) ||
+          plan.contains(_query) ||
+          inv.contains(_query);
     }).toList();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Transaction History'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _reload,
-            tooltip: 'Refresh',
-          ),
-        ],
-      ),
-      body: FutureBuilder<List<Map<String, String>>>(
-        future: _future,
+      appBar: AppBar(title: const Text('Transaction History')),
+      body: StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance
+            .collection('transactions')
+            .orderBy('createdAt', descending: true)
+            .snapshots(),
         builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
+          if (snap.connectionState == ConnectionState.waiting && !snap.hasData) {
             return const Center(
                 child: CircularProgressIndicator(color: AppColors.primary));
           }
@@ -71,39 +62,43 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(Icons.cloud_off, size: 48, color: AppColors.textMuted),
+                  const Icon(Icons.cloud_off,
+                      size: 48, color: AppColors.textMuted),
                   const SizedBox(height: 12),
                   const Text('Could not load transactions',
                       style: TextStyle(color: AppColors.textSecondary)),
-                  const SizedBox(height: 8),
-                  TextButton(onPressed: _reload, child: const Text('Retry')),
+                  const SizedBox(height: 6),
+                  Text(snap.error.toString(),
+                      style: const TextStyle(
+                          color: AppColors.textMuted, fontSize: 11),
+                      textAlign: TextAlign.center),
                 ],
               ),
             );
           }
 
-          final all = snap.data ?? [];
-          // Sort newest first (date format: YYYY-MM-DD or similar)
-          final sorted = List<Map<String, String>>.from(all)
-            ..sort((a, b) => (b['date'] ?? '').compareTo(a['date'] ?? ''));
+          final all = snap.data?.docs ?? [];
+          final filtered = _filter(all);
 
-          final filtered = _filter(sorted);
-
-          // Summary
+          // Summary from all (unfiltered)
           double totalRevenue = 0;
           int totalCredits = 0;
-          for (final r in all) {
-            totalRevenue += double.tryParse(r['amount'] ?? '') ?? 0;
-            totalCredits += int.tryParse(r['credits'] ?? '') ?? 0;
+          for (final doc in all) {
+            final d = doc.data() as Map<String, dynamic>;
+            totalRevenue += (d['amount'] as num? ?? 0).toDouble();
+            totalCredits += (d['credits'] as num? ?? 0).toInt();
           }
-          final currency = all.isNotEmpty ? (all.first['currency'] ?? 'GBP') : 'GBP';
+          final currency = all.isNotEmpty
+              ? ((all.first.data() as Map)['currency'] ?? 'SGD').toString()
+              : 'SGD';
 
           return Column(
             children: [
               // Summary bar
               Container(
                 margin: const EdgeInsets.fromLTRB(14, 14, 14, 0),
-                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
                 decoration: BoxDecoration(
                   color: AppColors.primary.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(14),
@@ -142,8 +137,8 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                   controller: _search,
                   decoration: InputDecoration(
                     hintText: 'Search by name, email, plan…',
-                    hintStyle:
-                        const TextStyle(color: AppColors.textMuted, fontSize: 13),
+                    hintStyle: const TextStyle(
+                        color: AppColors.textMuted, fontSize: 13),
                     prefixIcon: const Icon(Icons.search,
                         size: 18, color: AppColors.textMuted),
                     suffixIcon: _query.isNotEmpty
@@ -185,10 +180,11 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                         ),
                       )
                     : ListView.builder(
-                        padding: const EdgeInsets.fromLTRB(14, 4, 14, 24),
+                        padding:
+                            const EdgeInsets.fromLTRB(14, 4, 14, 24),
                         itemCount: filtered.length,
-                        itemBuilder: (_, i) =>
-                            _TransactionCard(tx: filtered[i]),
+                        itemBuilder: (_, i) => _TransactionCard(
+                            doc: filtered[i]),
                       ),
               ),
             ],
@@ -250,33 +246,33 @@ class _SummaryChip extends StatelessWidget {
 // ── Transaction card ──────────────────────────────────────────────────────────
 
 class _TransactionCard extends StatelessWidget {
-  final Map<String, String> tx;
-  const _TransactionCard({required this.tx});
+  final QueryDocumentSnapshot doc;
+  const _TransactionCard({required this.doc});
 
-  String _formatDate(String raw) {
-    // Expects YYYY-MM-DD or ISO string
+  String _formatDate(dynamic raw) {
     try {
-      final d = DateTime.parse(raw);
+      final dt = raw is Timestamp ? raw.toDate() : DateTime.parse(raw.toString());
       const months = [
         'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
         'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
       ];
-      return '${d.day} ${months[d.month - 1]} ${d.year}';
+      return '${dt.day} ${months[dt.month - 1]} ${dt.year}';
     } catch (_) {
-      return raw;
+      return '—';
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final amount = double.tryParse(tx['amount'] ?? '') ?? 0;
-    final currency = tx['currency'] ?? 'GBP';
-    final credits = tx['credits'] ?? '0';
-    final date = _formatDate(tx['date'] ?? '');
-    final name = tx['clientName'] ?? '—';
-    final email = tx['clientEmail'] ?? '';
-    final plan = tx['planName'] ?? '—';
-    final invoice = tx['invoiceNumber'] ?? '';
+    final data = doc.data() as Map<String, dynamic>;
+    final amount = (data['amount'] as num? ?? 0).toDouble();
+    final currency = (data['currency'] ?? 'SGD').toString();
+    final credits = (data['credits'] as num? ?? 0).toInt();
+    final date = _formatDate(data['createdAt']);
+    final name = (data['clientName'] ?? '—').toString();
+    final email = (data['clientEmail'] ?? '').toString();
+    final plan = (data['planName'] ?? '—').toString();
+    final invoice = (data['invoiceNumber'] ?? '').toString();
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -300,20 +296,16 @@ class _TransactionCard extends StatelessWidget {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Text(
-                  currency,
-                  style: const TextStyle(
-                      fontSize: 9,
-                      color: AppColors.primary,
-                      fontWeight: FontWeight.w700),
-                ),
-                Text(
-                  amount.toStringAsFixed(0),
-                  style: const TextStyle(
-                      fontSize: 17,
-                      color: AppColors.primary,
-                      fontWeight: FontWeight.w800),
-                ),
+                Text(currency,
+                    style: const TextStyle(
+                        fontSize: 9,
+                        color: AppColors.primary,
+                        fontWeight: FontWeight.w700)),
+                Text(amount.toStringAsFixed(0),
+                    style: const TextStyle(
+                        fontSize: 17,
+                        color: AppColors.primary,
+                        fontWeight: FontWeight.w800)),
               ],
             ),
           ),
