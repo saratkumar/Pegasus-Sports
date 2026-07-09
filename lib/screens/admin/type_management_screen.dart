@@ -135,6 +135,8 @@ class _TypeCard extends StatelessWidget {
               ? Image.network(imageUrl,
                   width: 56,
                   height: 56,
+                  cacheWidth: 112,
+                  cacheHeight: 112,
                   fit: BoxFit.cover,
                   errorBuilder: (_, __, ___) => _placeholder())
               : _placeholder(),
@@ -269,6 +271,7 @@ class _TypeFormScreenState extends State<_TypeFormScreen> {
                         previewUrl,
                         height: 160,
                         width: double.infinity,
+                        cacheHeight: 320,
                         fit: BoxFit.cover,
                         errorBuilder: (_, __, ___) {
                           WidgetsBinding.instance.addPostFrameCallback((_) {

@@ -2,12 +2,18 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
+import '../../models/coupon_model.dart';
+import '../../models/membership_plan_model.dart';
 import '../../models/user_model.dart';
+import '../../services/coupon_service.dart';
+import '../../services/invoice_pdf_service.dart';
 import '../../services/invoice_service.dart';
+import '../../services/membership_plan_service.dart';
 import '../../services/payment_service.dart';
 import '../../services/user_service.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
+import '../../utils/plan_category_style.dart';
 
 class MembershipScreen extends StatefulWidget {
   const MembershipScreen({super.key});
@@ -16,118 +22,53 @@ class MembershipScreen extends StatefulWidget {
   State<MembershipScreen> createState() => _MembershipScreenState();
 }
 
-class _MembershipScreenState extends State<MembershipScreen>
-    with SingleTickerProviderStateMixin {
-  late TabController _tab;
-
-  static const _categories = [
-    _Category(
-      title: 'Trials',
-      icon: Icons.explore_outlined,
-      color: Color(0xFF00D4AA),
-      plans: [
-        _Plan(name: 'All Class Types Trial', subtitle: 'Explore everything for 30 days', price: 99.00, credits: 4, validityDays: 30, badge: 'First Comers', features: ['Fitness, Boxing, Group PT & Yoga', '4 credits included', 'Cannot be paused or extended']),
-        _Plan(name: 'Yoga Trial', subtitle: 'Dip into yoga for 14 days', price: 40.00, credits: 1, validityDays: 14, badge: 'First Comers', features: ['Yoga classes only', '1 credit included', 'Cannot be paused or extended']),
-      ],
-    ),
-    _Category(
-      title: 'Drop-In',
-      icon: Icons.bolt_outlined,
-      color: Color(0xFF4FC3F7),
-      plans: [
-        _Plan(name: 'Drop-In Class', subtitle: 'One session, maximum flexibility', price: 40.00, credits: 1, validityDays: 7, features: ['60-minute session', 'Any class type', 'No commitment needed']),
-      ],
-    ),
-    _Category(
-      title: 'Credits',
-      icon: Icons.stars_outlined,
-      color: Color(0xFFFFAB40),
-      plans: [
-        _Plan(name: 'Fighter Credit Pack', subtitle: '20 credits · valid 1 month', price: 302.50, credits: 20, validityDays: 30, badge: 'Popular', features: ['Boxing & fitness classes', 'Use credits flexibly']),
-        _Plan(name: 'Stress Relief Package', subtitle: '24 credits · valid 4 months', price: 480.00, credits: 24, validityDays: 120, features: ['Longest validity', 'Great value per credit']),
-        _Plan(name: 'Starter Package', subtitle: '8 credits · valid 2 months', price: 280.00, credits: 8, validityDays: 60, features: ['Good for casual members']),
-        _Plan(name: 'Student Credit Pack', subtitle: '8 credits · valid 2 months', price: 225.00, credits: 8, validityDays: 60, badge: 'Student', features: ['Discounted rate for students']),
-      ],
-    ),
-    _Category(
-      title: 'Monthly',
-      icon: Icons.autorenew,
-      color: Color(0xFFB388FF),
-      plans: [
-        _Plan(name: 'Adult 3-Month Recurring', subtitle: 'Billed monthly · 3-month commitment', price: 400.00, priceLabel: '/mo', credits: 44, validityDays: 30, badge: 'Best Value', features: ['Unlimited Boxing & Fitness', '4 Yoga sessions/month', '60-min sessions']),
-        _Plan(name: 'Adult 6-Month Recurring', subtitle: 'Billed monthly · 6-month commitment', price: 300.00, priceLabel: '/mo', credits: 44, validityDays: 30, features: ['Unlimited Boxing & Fitness', '4 Yoga sessions/month', '60-min sessions']),
-        _Plan(name: 'Kids 3-Month Recurring', subtitle: 'Billed monthly · 3-month commitment', price: 180.00, priceLabel: '/mo', credits: 16, validityDays: 30, features: ['Kids Boxing & Fitness 45-60 min', '4 FREE Yoga sessions/month']),
-        _Plan(name: 'Kids 6-Month Recurring', subtitle: 'Billed monthly · 6-month commitment', price: 150.00, priceLabel: '/mo', credits: 16, validityDays: 30, features: ['Kids Boxing & Fitness 45-60 min', '4 FREE Yoga sessions/month']),
-      ],
-    ),
-    _Category(
-      title: 'Upfront',
-      icon: Icons.workspace_premium_outlined,
-      color: Color(0xFFFFD54F),
-      plans: [
-        _Plan(name: 'Adult 6-Month Upfront', subtitle: '240 credits · valid 6 months', price: 1500.00, credits: 240, validityDays: 180, badge: 'Max Savings', features: ['Unlimited Boxing & Fitness', '4 FREE Yoga sessions/month', 'Best price per credit']),
-        _Plan(name: 'Adult 3-Month Upfront', subtitle: '120 credits · valid 3 months', price: 960.00, credits: 120, validityDays: 90, features: ['Unlimited Boxing & Fitness', '4 FREE Yoga sessions/month']),
-        _Plan(name: 'Kids 6-Month Upfront', subtitle: '100 credits · valid 6 months', price: 780.00, credits: 100, validityDays: 180, features: ['Kids Boxing, Muay Thai & Fitness', '4 FREE Yoga sessions/month']),
-        _Plan(name: 'Kids 3-Month Upfront', subtitle: '50 credits · valid 3 months', price: 450.00, credits: 50, validityDays: 90, features: ['Kids Boxing, Muay Thai & Fitness', '4 FREE Yoga sessions/month']),
-      ],
-    ),
-    _Category(
-      title: 'Personal Training',
-      icon: Icons.person_outline,
-      color: Color(0xFFFF7043),
-      plans: [
-        _Plan(name: 'PT Pack – Senior Coach', subtitle: '10 x 1-on-1 sessions', price: 1650.00, credits: 10, validityDays: 84, badge: 'Includes 4 Yoga', features: ['Senior certified coach', 'Customized training plan', 'Individual or small group']),
-        _Plan(name: 'PT Pack – Junior Coach', subtitle: '10 x 1-on-1 sessions', price: 1150.00, credits: 10, validityDays: 84, features: ['Junior coach', 'Customized training plan', 'Individual or small group']),
-        _Plan(name: 'PT Group (Max 5 pax)', subtitle: '10 sessions · up to 5 people', price: 650.00, credits: 10, validityDays: 84, features: ['Small group up to 5', 'Per person pricing', 'Shared personalized attention']),
-        _Plan(name: 'PT Drop-In', subtitle: 'Single session, no commitment', price: 175.00, credits: 1, validityDays: 0, features: ['60-minute session', 'No package required']),
-      ],
-    ),
-    _Category(
-      title: 'Yoga',
-      icon: Icons.self_improvement,
-      color: Color(0xFF80CBC4),
-      plans: [
-        _Plan(name: 'Yoga Flow Credit Pack', subtitle: '4 credits for yoga classes', price: 140.00, credits: 4, validityDays: 60, features: ['Yoga classes only', '4 credits included']),
-      ],
-    ),
-  ];
+class _MembershipScreenState extends State<MembershipScreen> {
+  String? _selectedCategory;
 
   @override
   void initState() {
     super.initState();
-    _tab = TabController(length: _categories.length, vsync: this);
+    MembershipPlanService.ensureSeeded();
   }
 
-  @override
-  void dispose() {
-    _tab.dispose();
-    super.dispose();
+  Future<void> _openCheckout(
+      BuildContext context, MembershipPlanModel plan) async {
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.bg,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => _CheckoutSheet(
+        plan: plan,
+        onConfirm: (coupon, finalAmount) =>
+            _purchase(context, plan, coupon: coupon, finalAmount: finalAmount),
+      ),
+    );
   }
 
-  Future<void> _purchase(BuildContext context, _Plan plan) async {
+  Future<void> _purchase(
+    BuildContext context,
+    MembershipPlanModel plan, {
+    CouponModel? coupon,
+    required double finalAmount,
+  }) async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
-
-    final user = await UserService.getCurrentUser();
-    if (user != null) {
-      final activePlans = user.memberships.where((m) => m.isActive).toList();
-      if (activePlans.length >= 2) {
-        if (context.mounted) {
-          AppToast.error(context,
-              'You already have 2 active plans. Cancel one before purchasing.');
-        }
-        return;
-      }
-    }
-
     if (!context.mounted) return;
 
     try {
-      final paymentIntentId = await PaymentService.processPayment(
-        planName: plan.name,
-        amount: plan.price,
-        currency: 'sgd',
-      );
+      String paymentRef;
+      if (finalAmount > 0) {
+        paymentRef = await PaymentService.processPayment(
+          planName: plan.name,
+          amount: finalAmount,
+          currency: 'sgd',
+        );
+      } else {
+        // Coupon covers the full price — no charge to process.
+        paymentRef = 'coupon_${DateTime.now().millisecondsSinceEpoch}';
+      }
 
       // Payment succeeded — activate membership in Firestore
       final now = DateTime.now();
@@ -144,39 +85,71 @@ class _MembershipScreenState extends State<MembershipScreen>
       );
 
       await UserService.purchaseMembership(uid, entry);
+      if (coupon?.id != null) {
+        await CouponService.redeem(coupon!.id!);
+      }
 
       final currentUser = FirebaseAuth.instance.currentUser;
-      final invoiceNumber = InvoiceService.generateInvoiceNumber();
+      final invoiceNumber = InvoiceService.generateInvoiceNumber(paymentRef);
 
       // Write to Firestore transactions collection (primary source for admin UI)
-      await FirebaseFirestore.instance.collection('transactions').add({
+      final txDoc = await FirebaseFirestore.instance.collection('transactions').add({
         'invoiceNumber': invoiceNumber,
-        'paymentIntentId': paymentIntentId,
+        'paymentIntentId': paymentRef,
         'clientUid': uid,
         'clientName': currentUser?.displayName ?? 'Member',
         'clientEmail': currentUser?.email ?? '',
         'planName': plan.name,
         'credits': plan.credits,
-        'amount': plan.price,
+        'amount': finalAmount,
         'currency': 'SGD',
+        if (coupon != null) 'couponCode': coupon.code,
+        if (coupon != null) 'originalAmount': plan.price,
         'createdAt': FieldValue.serverTimestamp(),
       });
 
-      // Non-blocking: send invoice email + write to Google Sheet
+      // Best-effort background attempt: write to the Google Sheet and email
+      // the invoice if EmailJS happens to be configured. Silent either way —
+      // the PDF below is the actual invoice delivery method for now.
       InvoiceService.processWithInvoice(
         invoiceNumber: invoiceNumber,
-        paymentIntentId: paymentIntentId,
+        paymentIntentId: paymentRef,
         clientName: currentUser?.displayName ?? 'Member',
         clientEmail: currentUser?.email ?? '',
         planName: plan.name,
         credits: plan.credits,
-        amount: plan.price,
+        amount: finalAmount,
         currency: 'SGD',
-      );
+      ).then((result) {
+        final (emailSent, error) = result;
+        return txDoc.update({
+          'invoiceEmailSent': emailSent,
+          if (error != null) 'invoiceEmailError': error,
+        });
+      }).catchError((_) {});
 
       if (context.mounted) {
         AppToast.success(
             context, '${plan.name} activated! +${plan.credits} credits added');
+      }
+
+      try {
+        await InvoicePdfService.shareInvoice(
+          invoiceNumber: invoiceNumber,
+          paymentRef: paymentRef,
+          clientName: currentUser?.displayName ?? 'Member',
+          clientEmail: currentUser?.email ?? '',
+          planName: plan.name,
+          credits: plan.credits,
+          amount: finalAmount,
+          currency: 'SGD',
+          couponCode: coupon?.code,
+          originalAmount: coupon != null ? plan.price : null,
+        );
+      } catch (e) {
+        if (context.mounted) {
+          AppToast.error(context, 'Could not generate invoice PDF: $e');
+        }
       }
     } on StripeException catch (e) {
       if (e.error.code != FailureCode.Canceled && context.mounted) {
@@ -194,77 +167,141 @@ class _MembershipScreenState extends State<MembershipScreen>
     final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
     return Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: AppBar(
-        title: const Text('Membership Plans'),
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(50),
-          child: TabBar(
-            controller: _tab,
-            isScrollable: true,
-            tabAlignment: TabAlignment.start,
-            indicatorColor: AppColors.primary,
-            indicatorWeight: 3,
-            dividerColor: AppColors.divider,
-            labelColor: AppColors.textPrimary,
-            unselectedLabelColor: AppColors.textMuted,
-            labelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-            tabs: _categories
-                .map((c) => Tab(
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(c.icon, size: 15, color: c.color),
-                          const SizedBox(width: 6),
-                          Text(c.title),
-                        ],
-                      ),
-                    ))
-                .toList(),
-          ),
-        ),
-      ),
+      appBar: AppBar(title: const Text('Membership Plans')),
       body: uid.isEmpty
           ? const SizedBox()
-          : StreamBuilder<UserModel?>(
-              stream: UserService.currentUserStream(),
-              builder: (ctx, snap) {
-                final user = snap.data;
-                final activePlans =
-                    user?.memberships.where((m) => m.isActive).toList() ?? [];
+          : StreamBuilder<List<MembershipPlanModel>>(
+              stream: MembershipPlanService.streamPlans(),
+              builder: (context, planSnap) {
+                if (planSnap.connectionState == ConnectionState.waiting &&
+                    !planSnap.hasData) {
+                  return const Center(
+                      child: CircularProgressIndicator(color: AppColors.primary));
+                }
+                final allPlans =
+                    (planSnap.data ?? []).where((p) => p.isActive).toList();
+                final categories = <String>[];
+                for (final p in allPlans) {
+                  if (!categories.contains(p.category)) categories.add(p.category);
+                }
+                if (categories.isEmpty) {
+                  return const Center(
+                    child: Text('No membership plans available yet',
+                        style: TextStyle(color: AppColors.textSecondary)),
+                  );
+                }
+                if (_selectedCategory == null ||
+                    !categories.contains(_selectedCategory)) {
+                  _selectedCategory = categories.first;
+                }
+                final plans = allPlans
+                    .where((p) => p.category == _selectedCategory)
+                    .toList();
 
-                return Column(
-                  children: [
-                    // Credits + active plans banner
-                    if (user != null)
-                      _CreditsAndPlansBanner(user: user, activePlans: activePlans),
-                    Expanded(
-                      child: TabBarView(
-                        controller: _tab,
-                        children: _categories.map((cat) {
-                          return ListView.builder(
-                            padding:
-                                const EdgeInsets.fromLTRB(16, 16, 16, 24),
-                            itemCount: cat.plans.length,
+                return StreamBuilder<UserModel?>(
+                  stream: UserService.currentUserStream(),
+                  builder: (ctx, snap) {
+                    final user = snap.data;
+                    final activePlans =
+                        user?.memberships.where((m) => m.isActive).toList() ?? [];
+
+                    return Column(
+                      children: [
+                        if (user != null)
+                          _CreditsAndPlansBanner(user: user, activePlans: activePlans),
+                        const SizedBox(height: 8),
+                        _CategoryBar(
+                          categories: categories,
+                          selected: _selectedCategory!,
+                          onSelect: (c) => setState(() => _selectedCategory = c),
+                        ),
+                        Expanded(
+                          child: ListView.builder(
+                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                            itemCount: plans.length,
                             itemBuilder: (_, i) {
-                              final plan = cat.plans[i];
-                              final isOwned = activePlans
-                                  .any((m) => m.planName == plan.name);
+                              final plan = plans[i];
+                              final color = PlanCategoryStyle.of(plan.category).color;
+                              final isOwned =
+                                  activePlans.any((m) => m.planName == plan.name);
                               return _PlanCard(
                                 plan: plan,
-                                color: cat.color,
+                                color: color,
                                 isOwned: isOwned,
-                                canPurchase: activePlans.length < 2,
-                                onSelect: () => _purchase(context, plan),
+                                onSelect: () => _openCheckout(context, plan),
                               );
                             },
-                          );
-                        }).toList(),
-                      ),
-                    ),
-                  ],
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 );
               },
             ),
+    );
+  }
+}
+
+// ── Category selector ─────────────────────────────────────────────────────────
+
+class _CategoryBar extends StatelessWidget {
+  final List<String> categories;
+  final String selected;
+  final ValueChanged<String> onSelect;
+
+  const _CategoryBar(
+      {required this.categories, required this.selected, required this.onSelect});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 44,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        itemCount: categories.length,
+        itemBuilder: (context, i) {
+          final cat = categories[i];
+          final style = PlanCategoryStyle.of(cat);
+          final isSelected = cat == selected;
+          return Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: GestureDetector(
+              onTap: () => onSelect(cat),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? style.color.withValues(alpha: 0.15)
+                      : AppColors.surface,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: isSelected
+                        ? style.color.withValues(alpha: 0.5)
+                        : AppColors.divider,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(style.icon,
+                        size: 15,
+                        color: isSelected ? style.color : AppColors.textMuted),
+                    const SizedBox(width: 6),
+                    Text(cat,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                          color: isSelected ? style.color : AppColors.textSecondary,
+                        )),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 }
@@ -309,21 +346,6 @@ class _CreditsAndPlansBanner extends StatelessWidget {
                     fontWeight: FontWeight.w800,
                     color: AppColors.primary),
               ),
-              const Spacer(),
-              if (activePlans.length >= 2)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: AppColors.error.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: const Text('2/2 Plans Active',
-                      style: TextStyle(
-                          fontSize: 11,
-                          color: AppColors.error,
-                          fontWeight: FontWeight.w700)),
-                ),
             ],
           ),
           if (activePlans.isNotEmpty) ...[
@@ -393,17 +415,15 @@ class _ActivePlanRow extends StatelessWidget {
 // ── Plan card ────────────────────────────────────────────────────────────────
 
 class _PlanCard extends StatelessWidget {
-  final _Plan plan;
+  final MembershipPlanModel plan;
   final Color color;
   final bool isOwned;
-  final bool canPurchase;
   final VoidCallback onSelect;
 
   const _PlanCard({
     required this.plan,
     required this.color,
     required this.isOwned,
-    required this.canPurchase,
     required this.onSelect,
   });
 
@@ -556,19 +576,14 @@ class _PlanCard extends StatelessWidget {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: (isOwned || !canPurchase) ? null : onSelect,
+                    onPressed: isOwned ? null : onSelect,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: isOwned
-                          ? AppColors.divider
-                          : !canPurchase
-                              ? AppColors.divider
-                              : color.withValues(alpha: 0.15),
-                      foregroundColor: isOwned || !canPurchase
-                          ? AppColors.textMuted
-                          : color,
+                      backgroundColor:
+                          isOwned ? AppColors.divider : color.withValues(alpha: 0.15),
+                      foregroundColor: isOwned ? AppColors.textMuted : color,
                       elevation: 0,
                       side: BorderSide(
-                          color: isOwned || !canPurchase
+                          color: isOwned
                               ? AppColors.divider
                               : color.withValues(alpha: 0.4)),
                       padding: const EdgeInsets.symmetric(vertical: 12),
@@ -576,11 +591,7 @@ class _PlanCard extends StatelessWidget {
                           borderRadius: BorderRadius.circular(12)),
                     ),
                     child: Text(
-                      isOwned
-                          ? 'Active Plan'
-                          : !canPurchase
-                              ? '2 Plans Active (Max)'
-                              : 'Purchase Plan',
+                      isOwned ? 'Active Plan' : 'Purchase Plan',
                       style: const TextStyle(
                           fontWeight: FontWeight.w700, fontSize: 14),
                     ),
@@ -595,38 +606,178 @@ class _PlanCard extends StatelessWidget {
   }
 }
 
-class _Plan {
-  final String name;
-  final String subtitle;
-  final double price;
-  final String? priceLabel;
-  final int credits;
-  final int validityDays;
-  final String? badge;
-  final List<String> features;
+// ── Checkout sheet (with optional coupon) ─────────────────────────────────────
 
-  const _Plan({
-    required this.name,
-    required this.subtitle,
-    required this.price,
-    this.priceLabel,
-    required this.credits,
-    required this.validityDays,
-    this.badge,
-    this.features = const [],
-  });
+class _CheckoutSheet extends StatefulWidget {
+  final MembershipPlanModel plan;
+  final Future<void> Function(CouponModel? coupon, double finalAmount) onConfirm;
+
+  const _CheckoutSheet({required this.plan, required this.onConfirm});
+
+  @override
+  State<_CheckoutSheet> createState() => _CheckoutSheetState();
 }
 
-class _Category {
-  final String title;
-  final IconData icon;
-  final Color color;
-  final List<_Plan> plans;
+class _CheckoutSheetState extends State<_CheckoutSheet> {
+  final _couponCtrl = TextEditingController();
+  CouponModel? _appliedCoupon;
+  String? _error;
+  bool _validating = false;
+  bool _processing = false;
 
-  const _Category({
-    required this.title,
-    required this.icon,
-    required this.color,
-    required this.plans,
-  });
+  Future<void> _confirm() async {
+    setState(() => _processing = true);
+    await widget.onConfirm(_appliedCoupon, _finalAmount);
+    if (mounted) Navigator.pop(context);
+  }
+
+  @override
+  void dispose() {
+    _couponCtrl.dispose();
+    super.dispose();
+  }
+
+  double get _finalAmount => _appliedCoupon != null
+      ? _appliedCoupon!.applyTo(widget.plan.price)
+      : widget.plan.price;
+
+  Future<void> _applyCoupon() async {
+    final code = _couponCtrl.text.trim();
+    if (code.isEmpty) return;
+    setState(() {
+      _validating = true;
+      _error = null;
+    });
+    try {
+      final coupon = await CouponService.validate(code);
+      setState(() => _appliedCoupon = coupon);
+    } catch (e) {
+      setState(() {
+        _appliedCoupon = null;
+        _error = e.toString().replaceFirst('Exception: ', '');
+      });
+    }
+    if (mounted) setState(() => _validating = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: !_processing,
+      child: Padding(
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 24,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(widget.plan.name,
+              style: const TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary)),
+          const SizedBox(height: 4),
+          Text(widget.plan.subtitle,
+              style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+          const SizedBox(height: 20),
+          Row(children: [
+            Expanded(
+              child: TextField(
+                controller: _couponCtrl,
+                textCapitalization: TextCapitalization.characters,
+                enabled: _appliedCoupon == null,
+                decoration: InputDecoration(
+                  labelText: 'Coupon code (optional)',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            if (_appliedCoupon == null)
+              ElevatedButton(
+                onPressed: (_validating || _processing) ? null : _applyCoupon,
+                child: _validating
+                    ? const SizedBox(
+                        height: 16,
+                        width: 16,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white))
+                    : const Text('Apply'),
+              )
+            else
+              OutlinedButton(
+                onPressed: _processing
+                    ? null
+                    : () => setState(() {
+                          _appliedCoupon = null;
+                          _couponCtrl.clear();
+                          _error = null;
+                        }),
+                child: const Text('Remove'),
+              ),
+          ]),
+          if (_error != null) ...[
+            const SizedBox(height: 6),
+            Text(_error!, style: const TextStyle(fontSize: 12, color: AppColors.error)),
+          ],
+          if (_appliedCoupon != null) ...[
+            const SizedBox(height: 6),
+            Text(
+                '"${_appliedCoupon!.code}" applied — '
+                '${_appliedCoupon!.discountType == 'percent' ? '${_appliedCoupon!.value.toStringAsFixed(0)}% off' : '\$${_appliedCoupon!.value.toStringAsFixed(2)} off'}',
+                style: const TextStyle(
+                    fontSize: 12,
+                    color: Color(0xFF00D4AA),
+                    fontWeight: FontWeight.w600)),
+          ],
+          const SizedBox(height: 20),
+          const Divider(color: AppColors.divider),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Total',
+                  style: TextStyle(fontSize: 14, color: AppColors.textSecondary)),
+              Row(children: [
+                if (_appliedCoupon != null) ...[
+                  Text('\$${widget.plan.price.toStringAsFixed(2)}',
+                      style: const TextStyle(
+                          fontSize: 14,
+                          color: AppColors.textMuted,
+                          decoration: TextDecoration.lineThrough)),
+                  const SizedBox(width: 8),
+                ],
+                Text('\$${_finalAmount.toStringAsFixed(2)}',
+                    style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.primary)),
+              ]),
+            ],
+          ),
+          const SizedBox(height: 20),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: _processing ? null : _confirm,
+              child: _processing
+                  ? const SizedBox(
+                      height: 18,
+                      width: 18,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : Text(_finalAmount > 0 ? 'Confirm & Pay' : 'Confirm (Free)'),
+            ),
+          ),
+        ],
+      ),
+      ),
+    );
+  }
 }

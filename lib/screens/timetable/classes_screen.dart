@@ -303,6 +303,11 @@ class _ClassesScreenState extends State<ClassesScreen> {
       body: Column(
         children: [
           _DateBar(label: _formatDate(_selectedDate), onTap: _pickDate),
+          _DateCarousel(
+            selectedDate: _selectedDate,
+            onSelect: (d) => setState(() => _selectedDate = d),
+          ),
+          const SizedBox(height: 8),
           Expanded(
             child: StreamBuilder<List<ClassModel>>(
               stream: ClassService.streamClasses(),
@@ -407,6 +412,121 @@ class _DateBar extends StatelessWidget {
   }
 }
 
+// ── Date carousel ────────────────────────────────────────────────────────────
+
+class _DateCarousel extends StatefulWidget {
+  final DateTime selectedDate;
+  final ValueChanged<DateTime> onSelect;
+  const _DateCarousel({required this.selectedDate, required this.onSelect});
+
+  @override
+  State<_DateCarousel> createState() => _DateCarouselState();
+}
+
+class _DateCarouselState extends State<_DateCarousel> {
+  static const _dayCount = 60;
+  static const _tileWidth = 60.0;
+  static const _abbr = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  final _controller = ScrollController();
+  late final DateTime _baseDate;
+
+  @override
+  void initState() {
+    super.initState();
+    final now = DateTime.now();
+    _baseDate = DateTime(now.year, now.month, now.day);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToSelected());
+  }
+
+  @override
+  void didUpdateWidget(covariant _DateCarousel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_isSameDay(oldWidget.selectedDate, widget.selectedDate)) {
+      _scrollToSelected();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  bool _isSameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
+  void _scrollToSelected() {
+    if (!_controller.hasClients) return;
+    final index = widget.selectedDate.difference(_baseDate).inDays;
+    if (index < 0 || index >= _dayCount) return;
+    final target = (index * _tileWidth) - 100;
+    _controller.animateTo(
+      target.clamp(0.0, _controller.position.maxScrollExtent),
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOut,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 66,
+      child: ListView.builder(
+        controller: _controller,
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        itemCount: _dayCount,
+        itemBuilder: (context, i) {
+          final date = _baseDate.add(Duration(days: i));
+          final selected = _isSameDay(date, widget.selectedDate);
+          return GestureDetector(
+            onTap: () => widget.onSelect(date),
+            child: Container(
+              width: _tileWidth - 8,
+              margin: const EdgeInsets.only(right: 8),
+              decoration: BoxDecoration(
+                color: selected ? AppColors.primary : AppColors.card,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: selected
+                      ? AppColors.primary
+                      : AppColors.divider,
+                ),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    _abbr[date.weekday - 1],
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: selected
+                          ? Colors.white
+                          : AppColors.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${date.day}',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color:
+                          selected ? Colors.white : AppColors.textPrimary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
 // ── Class card ────────────────────────────────────────────────────────────────
 
 class _ClassCard extends StatelessWidget {
@@ -442,6 +562,7 @@ class _ClassCard extends StatelessWidget {
                 ? CachedNetworkImage(
                     imageUrl: item.image,
                     fit: BoxFit.cover,
+                    memCacheHeight: 380,
                     placeholder: (_, __) => _imgPlaceholder(),
                     errorWidget: (_, __, ___) => _imgPlaceholder(),
                   )

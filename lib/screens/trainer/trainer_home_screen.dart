@@ -50,6 +50,8 @@ class _TrainerHomeScreenState extends State<TrainerHomeScreen> {
         if (cls.coach.trim().toLowerCase() != _trainerName.trim().toLowerCase()) {
           return false;
         }
+        if (!cls.isActive) return false;
+        if (cls.isCancelledOn(_selectedDate)) return false;
         return _matchesDate(cls, _selectedDate);
       }).toList();
 

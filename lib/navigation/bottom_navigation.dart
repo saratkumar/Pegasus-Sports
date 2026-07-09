@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import '../models/user_model.dart';
 import '../screens/timetable/timetable_screen.dart';
 import '../screens/bookings/bookings_screen.dart';
@@ -53,6 +54,7 @@ class _BottomNavState extends State<BottomNav> {
           ElevatedButton(
             onPressed: () async {
               Navigator.pop(ctx);
+              await GoogleSignIn().signOut();
               await FirebaseAuth.instance.signOut();
             },
             style: ElevatedButton.styleFrom(

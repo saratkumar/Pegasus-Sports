@@ -137,26 +137,32 @@ class _ClassCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final active = cls.isActive;
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppColors.card,
+        color: active ? AppColors.card : AppColors.error.withValues(alpha: 0.05),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.divider),
+        border: Border.all(
+            color: active ? AppColors.divider : AppColors.error.withValues(alpha: 0.4)),
       ),
-      child: Row(
+      child: Opacity(
+        opacity: active ? 1 : 0.7,
+        child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-              color: AppColors.primary.withValues(alpha: 0.12),
+              color: (active ? AppColors.primary : AppColors.textMuted)
+                  .withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: const Icon(Icons.fitness_center,
-                color: AppColors.primary, size: 22),
+            child: Icon(Icons.fitness_center,
+                color: active ? AppColors.primary : AppColors.textMuted,
+                size: 22),
           ),
           const SizedBox(width: 14),
           Expanded(
@@ -174,6 +180,26 @@ class _ClassCard extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.symmetric(
                         horizontal: 8, vertical: 3),
+                    margin: const EdgeInsets.only(left: 6),
+                    decoration: BoxDecoration(
+                      color: (active
+                              ? const Color(0xFF00D4AA)
+                              : AppColors.error)
+                          .withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(active ? 'Active' : 'Inactive',
+                        style: TextStyle(
+                            fontSize: 10,
+                            color: active
+                                ? const Color(0xFF00D4AA)
+                                : AppColors.error,
+                            fontWeight: FontWeight.w700)),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 3),
+                    margin: const EdgeInsets.only(left: 6),
                     decoration: BoxDecoration(
                       color: AppColors.primary.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(8),
@@ -211,6 +237,7 @@ class _ClassCard extends StatelessWidget {
             ),
           ]),
         ],
+        ),
       ),
     );
   }
@@ -240,6 +267,9 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
   String _occurrence = 'weekly';
   Set<String> _selectedDays = {'Monday'};
   DateTime? _specificDate;
+  TimeOfDay? _startTimeOfDay;
+  TimeOfDay? _endTimeOfDay;
+  bool _isActive = true;
   bool _saving = false;
   bool _loadingData = true;
 
@@ -263,6 +293,7 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
     _groupSize = TextEditingController(text: e?.groupSize ?? '');
     _location = TextEditingController(text: e?.location ?? '');
     _occurrence = e?.occurrence ?? 'weekly';
+    _isActive = e?.isActive ?? true;
     _selectedFacilityId = e?.facilityId;
     _selectedCoach = e?.coach.isNotEmpty == true ? e!.coach : null;
     if (e != null && e.day.isNotEmpty) {
@@ -280,7 +311,101 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
             int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]));
       }
     }
+    _startTimeOfDay = e != null ? _parseTimeOfDay(e.startTime) : null;
+    final durationMinutes = e != null ? _parseDurationMinutes(e.duration) : null;
+    if (_startTimeOfDay != null && durationMinutes != null) {
+      _endTimeOfDay = _addMinutes(_startTimeOfDay!, durationMinutes);
+    }
     _loadData();
+  }
+
+  // ── Time helpers ─────────────────────────────────────────────────────────
+
+  static TimeOfDay? _parseTimeOfDay(String text) {
+    try {
+      final cleaned = text.toUpperCase().replaceAll(' ', '');
+      final isPM = cleaned.contains('PM');
+      final isAM = cleaned.contains('AM');
+      final digits = cleaned.replaceAll('AM', '').replaceAll('PM', '');
+      final parts = digits.split(':');
+      int hour = int.parse(parts[0]);
+      final minute = parts.length > 1 ? int.parse(parts[1]) : 0;
+      if (isPM && hour != 12) hour += 12;
+      if (isAM && hour == 12) hour = 0;
+      return TimeOfDay(hour: hour, minute: minute);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static int? _parseDurationMinutes(String text) {
+    final lower = text.toLowerCase();
+    final hrMatch = RegExp(r'(\d+)\s*hr').firstMatch(lower);
+    final minMatch = RegExp(r'(\d+)\s*min').firstMatch(lower);
+    if (hrMatch == null && minMatch == null) return null;
+    final hrs = hrMatch != null ? int.parse(hrMatch.group(1)!) : 0;
+    final mins = minMatch != null ? int.parse(minMatch.group(1)!) : 0;
+    final total = hrs * 60 + mins;
+    return total == 0 ? null : total;
+  }
+
+  static TimeOfDay _addMinutes(TimeOfDay time, int minutes) {
+    final total = (time.hour * 60 + time.minute + minutes) % (24 * 60);
+    return TimeOfDay(hour: total ~/ 60, minute: total % 60);
+  }
+
+  static String _formatTimeOfDay(TimeOfDay t) {
+    final hour12 = t.hourOfPeriod == 0 ? 12 : t.hourOfPeriod;
+    final minute = t.minute.toString().padLeft(2, '0');
+    final period = t.period == DayPeriod.am ? 'AM' : 'PM';
+    return '$hour12:$minute $period';
+  }
+
+  static String _formatDurationMinutes(int minutes) {
+    if (minutes <= 0) return '';
+    final hrs = minutes ~/ 60;
+    final mins = minutes % 60;
+    if (hrs > 0 && mins > 0) return '$hrs hr $mins mins';
+    if (hrs > 0) return '$hrs hr';
+    return '$mins mins';
+  }
+
+  int? get _durationMinutes {
+    if (_startTimeOfDay == null || _endTimeOfDay == null) return null;
+    final startTotal = _startTimeOfDay!.hour * 60 + _startTimeOfDay!.minute;
+    final endTotal = _endTimeOfDay!.hour * 60 + _endTimeOfDay!.minute;
+    final diff = endTotal - startTotal;
+    return diff > 0 ? diff : diff + 24 * 60;
+  }
+
+  Future<void> _pickStartTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _startTimeOfDay ?? const TimeOfDay(hour: 7, minute: 0),
+    );
+    if (picked == null) return;
+    setState(() {
+      _startTimeOfDay = picked;
+      _startTime.text = _formatTimeOfDay(picked);
+      final mins = _durationMinutes;
+      _duration.text = mins != null ? _formatDurationMinutes(mins) : '';
+    });
+  }
+
+  Future<void> _pickEndTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _endTimeOfDay ??
+          (_startTimeOfDay != null
+              ? _addMinutes(_startTimeOfDay!, 60)
+              : const TimeOfDay(hour: 8, minute: 0)),
+    );
+    if (picked == null) return;
+    setState(() {
+      _endTimeOfDay = picked;
+      final mins = _durationMinutes;
+      _duration.text = mins != null ? _formatDurationMinutes(mins) : '';
+    });
   }
 
   Future<void> _loadData() async {
@@ -342,6 +467,10 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
       AppToast.error(context, 'Please select a coach');
       return;
     }
+    if (_startTimeOfDay == null || _endTimeOfDay == null) {
+      AppToast.error(context, 'Please pick a start and end time');
+      return;
+    }
 
     // Build day value
     final String dayValue;
@@ -392,6 +521,7 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
       startTime: _startTime.text.trim(),
       type: _type,
       image: _typeImages[_type] ?? '',
+      isActive: _isActive,
       occurrence: _occurrence,
       specificDate: specificDateStr,
     );
@@ -450,10 +580,30 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
                       _field(_location, 'Location (optional)'),
                       const SizedBox(height: 12),
                     ]),
-                  _field(_startTime, 'Start Time (e.g. 7:00 PM)',
-                      required: true),
-                  const SizedBox(height: 12),
-                  _field(_duration, 'Duration (e.g. 60 mins)', required: true),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                          child: _timeField(
+                              'Start Time', _startTimeOfDay, _pickStartTime)),
+                      const SizedBox(width: 12),
+                      Expanded(
+                          child: _timeField(
+                              'End Time', _endTimeOfDay, _pickEndTime)),
+                    ],
+                  ),
+                  if (_durationMinutes != null) ...[
+                    const SizedBox(height: 8),
+                    Row(children: [
+                      const Icon(Icons.schedule,
+                          size: 14, color: AppColors.textMuted),
+                      const SizedBox(width: 6),
+                      Text(
+                          'Duration: ${_formatDurationMinutes(_durationMinutes!)}',
+                          style: const TextStyle(
+                              fontSize: 12, color: AppColors.textMuted)),
+                    ]),
+                  ],
                   const SizedBox(height: 12),
                   _field(_groupSize, 'Capacity',
                       required: true,
@@ -490,7 +640,23 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
                     ])
                   else
                     _datePicker(),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 16),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: _isActive,
+                    onChanged: (v) => setState(() => _isActive = v),
+                    activeThumbColor: const Color(0xFF00D4AA),
+                    title: const Text('Active',
+                        style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textPrimary)),
+                    subtitle: const Text(
+                        'Inactive classes are hidden from clients and trainers',
+                        style: TextStyle(
+                            fontSize: 12, color: AppColors.textSecondary)),
+                  ),
+                  const SizedBox(height: 8),
                   ElevatedButton(
                     onPressed: _saving ? null : _save,
                     child: _saving
@@ -619,6 +785,36 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
           _location.text = fac['name']?.toString() ?? '';
         }
       },
+    );
+  }
+
+  Widget _timeField(String label, TimeOfDay? value, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        decoration: BoxDecoration(
+          border: Border.all(
+              color: value == null ? AppColors.error : AppColors.divider),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(children: [
+          const Icon(Icons.access_time,
+              size: 16, color: AppColors.textMuted),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              value == null ? '$label *' : _formatTimeOfDay(value),
+              style: TextStyle(
+                color: value == null
+                    ? AppColors.textMuted
+                    : AppColors.textPrimary,
+                fontSize: 14,
+              ),
+            ),
+          ),
+        ]),
+      ),
     );
   }
 

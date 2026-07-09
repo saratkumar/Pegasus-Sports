@@ -107,20 +107,11 @@ class UserService {
     return (user?.credits ?? 0) > 0;
   }
 
-  /// Adds a membership plan; enforces max 2 active plans.
+  /// Adds a membership plan.
   static Future<void> purchaseMembership(
     String uid,
     MembershipEntry entry,
   ) async {
-    final user = await getUser(uid);
-    if (user == null) return;
-
-    final activePlans = user.memberships.where((m) => m.isActive).toList();
-    if (activePlans.length >= 2) {
-      throw Exception(
-          'You already have 2 active membership plans. Cancel one before purchasing another.');
-    }
-
     await _db.collection('users').doc(uid).update({
       'memberships': FieldValue.arrayUnion([entry.toMap()]),
       'credits': FieldValue.increment(entry.credits),

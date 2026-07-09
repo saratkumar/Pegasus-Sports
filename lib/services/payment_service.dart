@@ -5,6 +5,22 @@ import 'package:http/http.dart' as http;
 import 'config_service.dart';
 
 class PaymentService {
+  // Safe to include in client code. Swap pk_test_ → pk_live_ for production.
+  // Get yours from: https://dashboard.stripe.com/test/apikeys
+  static const _publishableKey =
+      'pk_test_51Tps5X5GDQ6NbhM7JIa90Yh2ce52faber57nbE9GJB4kZFS7QpxjF4nWO0RxNmWcs8kPNWAFX4vG2WcGKt5irYzu00nf4mQiQu';
+
+  static bool _initialized = false;
+
+  /// Initializes the Stripe SDK on first use instead of at app startup, so
+  /// clients who never open the payment flow don't pay its memory/CPU cost.
+  static Future<void> _ensureInitialized() async {
+    if (_initialized) return;
+    Stripe.publishableKey = _publishableKey;
+    await Stripe.instance.applySettings();
+    _initialized = true;
+  }
+
   /// Fetches Stripe secret key from Google Sheet → creates PaymentIntent via
   /// Stripe REST API → shows payment sheet to user.
   ///
@@ -16,6 +32,7 @@ class PaymentService {
     required double amount,
     required String currency,
   }) async {
+    await _ensureInitialized();
     final secretKey = await ConfigService.get('stripe_secret_key');
 
     final response = await http.post(

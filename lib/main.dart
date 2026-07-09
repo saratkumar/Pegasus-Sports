@@ -2,7 +2,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_stripe/flutter_stripe.dart';
 import 'services/notifications.dart';
 import 'services/user_service.dart';
 import 'firebase_options.dart';
@@ -11,17 +10,12 @@ import 'models/user_model.dart';
 import 'navigation/bottom_navigation.dart';
 import 'screens/login/login_screen.dart';
 
-// ── Stripe publishable key ────────────────────────────────────────────────────
-// Safe to include in client code. Swap pk_test_ → pk_live_ for production.
-// Get yours from: https://dashboard.stripe.com/test/apikeys
-const _stripePublishableKey =
-    'pk_test_51Tps5X5GDQ6NbhM7JIa90Yh2ce52faber57nbE9GJB4kZFS7QpxjF4nWO0RxNmWcs8kPNWAFX4vG2WcGKt5irYzu00nf4mQiQu';
-
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  Stripe.publishableKey = _stripePublishableKey;
-  await Stripe.instance.applySettings();
+  // Stripe SDK is initialized lazily by PaymentService on first payment
+  // attempt, rather than here, to keep cold-start memory/CPU down for
+  // clients who never open the payment flow.
   await NotificationService.initialize();
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,

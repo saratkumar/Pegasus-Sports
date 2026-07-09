@@ -1,15 +1,69 @@
 import 'package:flutter/material.dart';
+import '../../services/backup_service.dart';
 import '../../utils/app_colors.dart';
+import 'backup_screen.dart';
+import 'cash_payment_screen.dart';
 import 'class_management_screen.dart';
+import 'coupon_management_screen.dart';
 import 'facility_management_screen.dart';
+import 'plan_management_screen.dart';
 import 'type_management_screen.dart';
 import 'admin_requests_screen.dart';
 import 'user_management_screen.dart';
 import 'attendance_report_screen.dart';
 import 'transactions_screen.dart';
 
-class AdminHomeScreen extends StatelessWidget {
+class AdminHomeScreen extends StatefulWidget {
   const AdminHomeScreen({super.key});
+
+  @override
+  State<AdminHomeScreen> createState() => _AdminHomeScreenState();
+}
+
+class _AdminHomeScreenState extends State<AdminHomeScreen> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkBackupReminder());
+  }
+
+  Future<void> _checkBackupReminder() async {
+    final overdue = await BackupService.isOverdue();
+    if (!overdue || !mounted) return;
+    final lastBackupAt = await BackupService.getLastBackupAt();
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: const Text('Backup Reminder',
+            style: TextStyle(
+                color: AppColors.textPrimary, fontWeight: FontWeight.w700)),
+        content: Text(
+          lastBackupAt == null
+              ? 'A backup has never been taken. Please export a backup of logs and requests.'
+              : 'It has been over 30 days since the last backup. Please export a fresh backup of logs and requests.',
+          style: const TextStyle(color: AppColors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Later',
+                style: TextStyle(color: AppColors.textMuted)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const BackupScreen()));
+            },
+            child: const Text('Back Up Now'),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -55,6 +109,33 @@ class AdminHomeScreen extends StatelessWidget {
             subtitle: 'Manage roles, credits and memberships',
             page: const UserManagementScreen(),
           ),
+          const SizedBox(height: 10),
+          _tile(
+            context,
+            icon: Icons.card_membership_outlined,
+            color: const Color(0xFF4FC3F7),
+            title: 'Membership Plans',
+            subtitle: 'Create, edit and price membership plans',
+            page: const PlanManagementScreen(),
+          ),
+          const SizedBox(height: 10),
+          _tile(
+            context,
+            icon: Icons.local_offer_outlined,
+            color: const Color(0xFFEC407A),
+            title: 'Coupons',
+            subtitle: 'Create discount codes for client checkout',
+            page: const CouponManagementScreen(),
+          ),
+          const SizedBox(height: 10),
+          _tile(
+            context,
+            icon: Icons.payments_outlined,
+            color: const Color(0xFF66BB6A),
+            title: 'Record Cash Payment',
+            subtitle: 'Sell a plan to a client who paid by cash',
+            page: const CashPaymentScreen(),
+          ),
           const SizedBox(height: 22),
           _SectionHeader('Approvals'),
           const SizedBox(height: 12),
@@ -85,6 +166,15 @@ class AdminHomeScreen extends StatelessWidget {
             title: 'Transactions',
             subtitle: 'Payment history, revenue summary and invoice lookup',
             page: const TransactionsScreen(),
+          ),
+          const SizedBox(height: 10),
+          _tile(
+            context,
+            icon: Icons.backup_outlined,
+            color: const Color(0xFF7E57C2),
+            title: 'Backup',
+            subtitle: 'Export logs and requests to CSV/Excel',
+            page: const BackupScreen(),
           ),
         ],
       ),
