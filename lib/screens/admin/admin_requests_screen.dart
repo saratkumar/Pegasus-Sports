@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -5,7 +6,9 @@ import '../../models/admin_request_model.dart';
 import '../../models/user_model.dart';
 import '../../services/user_service.dart';
 import '../../services/class_service.dart';
+import '../../services/config_service.dart';
 import '../../services/notifications.dart';
+import '../../services/waiting_list_service.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
 
@@ -174,14 +177,6 @@ class _RequestCardState extends State<_RequestCard> {
     setState(() => _processing = true);
     try {
       final adminUid = FirebaseAuth.instance.currentUser?.uid ?? '';
-      await FirebaseFirestore.instance
-          .collection('adminRequests')
-          .doc(req.id)
-          .update({
-        'status': approved ? 'approved' : 'rejected',
-        'resolvedAt': Timestamp.now(),
-        'resolvedBy': adminUid,
-      });
 
       if (approved) {
         if (req.type == 'credit_request' && req.targetUserId != null) {
@@ -212,6 +207,15 @@ class _RequestCardState extends State<_RequestCard> {
                 'requestedBy': req.requestedByName,
                 'createdAt': Timestamp.now(),
               });
+              // Pull in anyone waiting for this exact session, up to the
+              // number of newly opened slots
+              await WaitingListService.admitFromWaitingList(
+                classId: req.classId!,
+                bookingDate: DateTime.parse(sessionDate),
+                bookingTime: cls.startTime,
+                className: req.className ?? cls.mode,
+                count: req.amount,
+              );
             } else {
               // Legacy request without sessionDate — still do permanent update
               await ClassService.updateGroupSize(
@@ -221,8 +225,53 @@ class _RequestCardState extends State<_RequestCard> {
         }
       }
 
+      // Resolved requests don't stay in Firestore — archive to the Sheet's
+      // ActivityLog, then remove the Firestore record entirely. If the
+      // archive write fails, keep the Firestore record (status-flipped)
+      // instead of losing the only copy of what happened.
+      final typeLabel =
+          req.type == 'credit_request' ? 'Credit Request' : 'Slot Increase';
+      final archived = await ConfigService.logActivityEvent(
+        eventType: '$typeLabel ${approved ? 'Approved' : 'Rejected'}',
+        classId: req.classId ?? '',
+        className: req.className ?? '',
+        sessionDate: req.sessionDate != null
+            ? DateTime.parse(req.sessionDate!)
+            : req.createdAt,
+        sessionTime: '',
+        userId: req.requestedBy,
+        userName: req.requestedByName,
+        bookedByRole: 'trainer',
+        creditsUsed: req.amount,
+        bookingId: req.id ?? '',
+        note: req.targetUserName != null
+            ? 'For client: ${req.targetUserName}. ${req.note}'
+            : req.note,
+      );
+
+      if (archived) {
+        await FirebaseFirestore.instance
+            .collection('adminRequests')
+            .doc(req.id)
+            .delete();
+      } else {
+        await FirebaseFirestore.instance
+            .collection('adminRequests')
+            .doc(req.id)
+            .update({
+          'status': approved ? 'approved' : 'rejected',
+          'resolvedAt': Timestamp.now(),
+          'resolvedBy': adminUid,
+        });
+      }
+
       if (mounted) {
-        AppToast.success(context, approved ? 'Request approved' : 'Request rejected');
+        AppToast.success(
+            context,
+            approved
+                ? 'Request approved'
+                : 'Request rejected'
+                    '${archived ? '' : ' (kept in Firestore — archive to Sheet failed)'}');
       }
     } catch (e) {
       if (mounted) AppToast.error(context, 'Failed: ${e.toString()}');
@@ -251,8 +300,9 @@ class _RequestCardState extends State<_RequestCard> {
               .where('classId', isEqualTo: req.classId)
               .get();
           final sessionDocs = allSnap.docs.where((d) {
-            if (d['status'] == 'cancelled_by_trainer') return false;
-            final bd = d['bookingDate'];
+            final data = d.data();
+            if (data['status'] == 'cancelled_by_trainer') return false;
+            final bd = data['bookingDate'];
             if (bd == null) return false;
             final dt = (bd as Timestamp).toDate();
             return !dt.isBefore(date) && dt.isBefore(end);
@@ -264,6 +314,32 @@ class _RequestCardState extends State<_RequestCard> {
             batch.update(doc.reference, {'status': 'cancelled_by_trainer'});
           }
           await batch.commit();
+
+          for (final doc in sessionDocs) {
+            final data = doc.data();
+            final uid = data['userId']?.toString() ?? '';
+            final bd = (data['bookingDate'] as Timestamp).toDate();
+            unawaited(() async {
+              final userDoc = await FirebaseFirestore.instance
+                  .collection('users')
+                  .doc(uid)
+                  .get();
+              final userName = userDoc.data()?['name']?.toString() ?? uid;
+              await ConfigService.logActivityEvent(
+                eventType: 'Cancelled by Trainer',
+                classId: req.classId!,
+                className:
+                    req.className ?? data['displayName']?.toString() ?? '',
+                sessionDate: bd,
+                sessionTime: data['bookingTime']?.toString() ?? '',
+                userId: uid,
+                userName: userName,
+                bookedByRole: data['bookedByRole']?.toString() ?? 'client',
+                creditsUsed: data['creditsUsed'] as int? ?? 1,
+                bookingId: doc.id,
+              );
+            }());
+          }
 
           // Refund credits in parallel
           final refunds = <Future>[];
@@ -321,18 +397,43 @@ class _RequestCardState extends State<_RequestCard> {
         });
       }
 
-      await FirebaseFirestore.instance
-          .collection('adminRequests')
-          .doc(req.id)
-          .update({
-        'status': 'approved_cancel',
-        'resolvedAt': Timestamp.now(),
-        'resolvedBy': adminUid,
-      });
+      final archived = await ConfigService.logActivityEvent(
+        eventType: 'Session Cancel Request Approved',
+        classId: req.classId ?? '',
+        className: req.className ?? '',
+        sessionDate: req.sessionDate != null
+            ? DateTime.parse(req.sessionDate!)
+            : req.createdAt,
+        sessionTime: '',
+        userId: req.requestedBy,
+        userName: req.requestedByName,
+        bookedByRole: 'trainer',
+        creditsUsed: 0,
+        bookingId: req.id ?? '',
+        note: req.note,
+      );
+
+      if (archived) {
+        await FirebaseFirestore.instance
+            .collection('adminRequests')
+            .doc(req.id)
+            .delete();
+      } else {
+        await FirebaseFirestore.instance
+            .collection('adminRequests')
+            .doc(req.id)
+            .update({
+          'status': 'approved_cancel',
+          'resolvedAt': Timestamp.now(),
+          'resolvedBy': adminUid,
+        });
+      }
 
       if (mounted) {
         AppToast.success(
-            context, 'Cancellation approved — bookings cancelled & credits refunded');
+            context,
+            'Cancellation approved — bookings cancelled & credits refunded'
+            '${archived ? '' : ' (kept in Firestore — archive to Sheet failed)'}');
       }
     } catch (e, st) {
       debugPrint('_approveSessionCancel: $e\n$st');
@@ -379,19 +480,44 @@ class _RequestCardState extends State<_RequestCard> {
       await NotificationService.showTrainerAssigned(
           req.className ?? '', req.sessionDate ?? '');
 
-      // Mark request resolved
-      await FirebaseFirestore.instance
-          .collection('adminRequests')
-          .doc(req.id)
-          .update({
-        'status': 'reassigned',
-        'resolvedAt': Timestamp.now(),
-        'resolvedBy': adminUid,
-        'newTrainer': selected.name,
-      });
+      final archived = await ConfigService.logActivityEvent(
+        eventType: 'Session Reassigned',
+        classId: req.classId ?? '',
+        className: req.className ?? '',
+        sessionDate: req.sessionDate != null
+            ? DateTime.parse(req.sessionDate!)
+            : req.createdAt,
+        sessionTime: '',
+        userId: req.requestedBy,
+        userName: req.requestedByName,
+        bookedByRole: 'trainer',
+        creditsUsed: 0,
+        bookingId: req.id ?? '',
+        note: 'Reassigned to ${selected.name}',
+      );
+
+      if (archived) {
+        await FirebaseFirestore.instance
+            .collection('adminRequests')
+            .doc(req.id)
+            .delete();
+      } else {
+        await FirebaseFirestore.instance
+            .collection('adminRequests')
+            .doc(req.id)
+            .update({
+          'status': 'reassigned',
+          'resolvedAt': Timestamp.now(),
+          'resolvedBy': adminUid,
+          'newTrainer': selected.name,
+        });
+      }
 
       if (mounted) {
-        AppToast.success(context, 'Session reassigned to ${selected.name}');
+        AppToast.success(
+            context,
+            'Session reassigned to ${selected.name}'
+            '${archived ? '' : ' (kept in Firestore — archive to Sheet failed)'}');
       }
     } catch (e, st) {
       debugPrint('_reassignTrainer: $e\n$st');

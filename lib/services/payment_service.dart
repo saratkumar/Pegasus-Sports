@@ -65,6 +65,19 @@ class PaymentService {
             primary: Color(0xFFFF7A00),
           ),
         ),
+        // PayNow (and other SG-local payment methods surfaced via
+        // automatic_payment_methods) requires a Singapore billing address —
+        // all customers are local, so prefill it instead of asking.
+        billingDetails: const BillingDetails(
+          address: Address(
+            city: null,
+            country: 'SG',
+            line1: null,
+            line2: null,
+            postalCode: null,
+            state: null,
+          ),
+        ),
       ),
     );
 
@@ -73,5 +86,22 @@ class PaymentService {
 
     // Extract PI ID from client secret: "pi_xxx_secret_yyy" → "pi_xxx"
     return clientSecret.split('_secret_').first;
+  }
+
+  /// Overwrites the PaymentIntent's description (initially set to the plan
+  /// name at creation, before the invoice number exists) so the Stripe
+  /// Dashboard shows the invoice number instead. Best-effort — the invoice
+  /// itself is already recorded in Firestore regardless of this call.
+  static Future<void> setInvoiceDescription(
+      String paymentIntentId, String invoiceNumber) async {
+    final secretKey = await ConfigService.get('stripe_secret_key');
+    await http.post(
+      Uri.parse('https://api.stripe.com/v1/payment_intents/$paymentIntentId'),
+      headers: {
+        'Authorization': 'Bearer $secretKey',
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: 'description=${Uri.encodeComponent(invoiceNumber)}',
+    );
   }
 }

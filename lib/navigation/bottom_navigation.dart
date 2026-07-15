@@ -72,11 +72,11 @@ class _BottomNavState extends State<BottomNav> {
   List<Widget> get _pages {
     switch (_effectiveRole) {
       case 'admin':
-        return const [
-          TimetableScreen(),
-          AdminHomeScreen(),
-          BookingsScreen(),
-          MembershipScreen(),
+        return [
+          const TimetableScreen(),
+          AdminHomeScreen(userModel: widget.userModel),
+          const BookingsScreen(),
+          const MembershipScreen(),
         ];
       case 'trainer':
         return const [

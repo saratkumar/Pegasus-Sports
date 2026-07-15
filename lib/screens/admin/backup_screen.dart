@@ -4,12 +4,15 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../../services/backup_service.dart';
+import '../../services/cleanup_service.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
 
-/// Lets an admin export all booking/waiting-list logs and admin requests to
-/// CSV (opens straight in Excel/Sheets) and records when the backup was
-/// taken, so [BackupService.isOverdue] can nudge them if it's been a while.
+/// Lets an admin export a snapshot of current Firestore config/live data
+/// (classes, facilities, types, bookings) to CSV — a disaster-recovery copy
+/// of what's live right now, not a history log. Full event history already
+/// lives in the Google Sheet ActivityLog mirror (see ConfigService), which
+/// this does not duplicate.
 class BackupScreen extends StatefulWidget {
   const BackupScreen({super.key});
 
@@ -17,10 +20,27 @@ class BackupScreen extends StatefulWidget {
   State<BackupScreen> createState() => _BackupScreenState();
 }
 
+class _BackupModule {
+  final String id;
+  final String label;
+  final String fileName;
+  final Future<String> Function() buildCsv;
+  bool selected = true;
+
+  _BackupModule({
+    required this.id,
+    required this.label,
+    required this.fileName,
+    required this.buildCsv,
+  });
+}
+
 class _BackupScreenState extends State<BackupScreen> {
   DateTime? _lastBackupAt;
+  DateTime? _lastCleanupAt;
   bool _loadingStatus = true;
   bool _backingUp = false;
+  bool _clearing = false;
 
   @override
   void initState() {
@@ -29,10 +49,14 @@ class _BackupScreenState extends State<BackupScreen> {
   }
 
   Future<void> _loadStatus() async {
-    final last = await BackupService.getLastBackupAt();
+    final results = await Future.wait([
+      BackupService.getLastBackupAt(),
+      CleanupService.getLastRunAt(),
+    ]);
     if (!mounted) return;
     setState(() {
-      _lastBackupAt = last;
+      _lastBackupAt = results[0];
+      _lastCleanupAt = results[1];
       _loadingStatus = false;
     });
   }
@@ -51,8 +75,7 @@ class _BackupScreenState extends State<BackupScreen> {
 
   String _fmtTimestamp(dynamic ts) {
     if (ts is! Timestamp) return '';
-    final d = ts.toDate();
-    return _fmtDate(d);
+    return _fmtDate(ts.toDate());
   }
 
   Future<File> _writeCsv(String fileName, String csv) async {
@@ -62,79 +85,90 @@ class _BackupScreenState extends State<BackupScreen> {
     return file;
   }
 
-  Future<void> _runBackup() async {
+  // ── Module CSV builders ─────────────────────────────────────────────────
+
+  Future<String> _buildClassesCsv() async {
+    final snap = await FirebaseFirestore.instance.collection('classes').get();
+    final header = 'ID,Day,Mode,Coach,Location,Group Size,Duration,'
+        'Detail Location,Start Time,Type,Occurrence,Specific Date,Active\n';
+    final lines = snap.docs.map((doc) {
+      final d = doc.data();
+      return [
+        doc.id, d['day'], d['mode'], d['coach'], d['location'],
+        d['groupSize'], d['duration'], d['detailLocation'], d['startTime'],
+        d['type'], d['occurrence'], d['specificDate'], d['isActive'],
+      ].map(_csvCell).join(',');
+    }).join('\n');
+    return '$header$lines';
+  }
+
+  Future<String> _buildFacilitiesCsv() async {
+    final snap = await FirebaseFirestore.instance.collection('facilities').get();
+    final header = 'ID,Name,Address\n';
+    final lines = snap.docs.map((doc) {
+      final d = doc.data();
+      return [doc.id, d['name'], d['address']].map(_csvCell).join(',');
+    }).join('\n');
+    return '$header$lines';
+  }
+
+  Future<String> _buildTypesCsv() async {
+    final snap = await FirebaseFirestore.instance.collection('classTypes').get();
+    final header = 'ID,Name,Image URL\n';
+    final lines = snap.docs.map((doc) {
+      final d = doc.data();
+      return [doc.id, d['name'], d['imageUrl']].map(_csvCell).join(',');
+    }).join('\n');
+    return '$header$lines';
+  }
+
+  Future<String> _buildBookingsCsv() async {
+    final snap = await FirebaseFirestore.instance.collection('bookings').get();
+    final header = 'ID,User ID,Class,Day,Date,Time,Booked By,Role,Credits,Status,Created At\n';
+    final lines = snap.docs.map((doc) {
+      final d = doc.data();
+      return [
+        doc.id, d['userId'], d['displayName'], d['bookingDay'],
+        _fmtTimestamp(d['bookingDate']), d['bookingTime'], d['bookedBy'],
+        d['bookedByRole'], d['creditsUsed'], d['status'] ?? 'active',
+        _fmtTimestamp(d['createdAt']),
+      ].map(_csvCell).join(',');
+    }).join('\n');
+    return '$header$lines';
+  }
+
+  List<_BackupModule> _modules() => [
+        _BackupModule(id: 'classes', label: 'Classes', fileName: 'Classes',
+            buildCsv: _buildClassesCsv),
+        _BackupModule(id: 'facilities', label: 'Facilities', fileName: 'Facilities',
+            buildCsv: _buildFacilitiesCsv),
+        _BackupModule(id: 'types', label: 'Class Types', fileName: 'ClassTypes',
+            buildCsv: _buildTypesCsv),
+        _BackupModule(id: 'bookings', label: 'Current Bookings', fileName: 'Bookings',
+            buildCsv: _buildBookingsCsv),
+      ];
+
+  Future<void> _pickModulesAndBackup() async {
+    final modules = _modules();
+    final selected = await showDialog<List<_BackupModule>>(
+      context: context,
+      builder: (ctx) => _ModulePickerDialog(modules: modules),
+    );
+    if (selected == null || selected.isEmpty) return;
+
     setState(() => _backingUp = true);
     try {
       final today =
           '${DateTime.now().year}-${DateTime.now().month.toString().padLeft(2, '0')}-${DateTime.now().day.toString().padLeft(2, '0')}';
 
-      // ── Logs: bookings + waiting list (all time) ─────────────────────────
-      final bookings =
-          await FirebaseFirestore.instance.collection('bookings').get();
-      final waitingList =
-          await FirebaseFirestore.instance.collection('waitingList').get();
-
-      final logHeader =
-          'Source,Date/Time,User,Class,Status,Booked By,Credits\n';
-      final logLines = <String>[];
-      for (final doc in bookings.docs) {
-        final d = doc.data();
-        logLines.add([
-          'Booking',
-          _fmtTimestamp(d['bookingDate']),
-          d['userId'],
-          d['displayName'],
-          d['status'] ?? 'booked',
-          d['bookedByRole'] ?? 'client',
-          d['creditsUsed'],
-        ].map(_csvCell).join(','));
+      final files = <XFile>[];
+      for (final module in selected) {
+        final csv = await module.buildCsv();
+        final file = await _writeCsv('PSAS_${module.fileName}_$today.csv', csv);
+        files.add(XFile(file.path, mimeType: 'text/csv'));
       }
-      for (final doc in waitingList.docs) {
-        final d = doc.data();
-        logLines.add([
-          'Waitlist',
-          _fmtTimestamp(d['bookingDate']),
-          d['userName'],
-          d['className'],
-          d['status'] ?? 'waiting',
-          'client',
-          '1',
-        ].map(_csvCell).join(','));
-      }
-      final logCsv = '$logHeader${logLines.join('\n')}';
 
-      // ── Requests: adminRequests (all time) ────────────────────────────────
-      final requests = await FirebaseFirestore.instance
-          .collection('adminRequests')
-          .orderBy('createdAt', descending: true)
-          .get();
-      final reqHeader =
-          'Type,Requested By,Target User,Class,Amount,Status,Note,Created At\n';
-      final reqLines = requests.docs.map((doc) {
-        final d = doc.data();
-        return [
-          d['type'],
-          d['requestedByName'],
-          d['targetUserName'],
-          d['className'],
-          d['amount'],
-          d['status'],
-          d['note'],
-          _fmtTimestamp(d['createdAt']),
-        ].map(_csvCell).join(',');
-      }).join('\n');
-      final reqCsv = '$reqHeader$reqLines';
-
-      final logFile = await _writeCsv('PSAS_Logs_$today.csv', logCsv);
-      final reqFile = await _writeCsv('PSAS_Requests_$today.csv', reqCsv);
-
-      await Share.shareXFiles(
-        [
-          XFile(logFile.path, mimeType: 'text/csv'),
-          XFile(reqFile.path, mimeType: 'text/csv'),
-        ],
-        subject: 'PSAS Backup – $today',
-      );
+      await Share.shareXFiles(files, subject: 'PSAS Backup – $today');
 
       await BackupService.recordBackup();
       if (!mounted) return;
@@ -144,6 +178,51 @@ class _BackupScreenState extends State<BackupScreen> {
       if (mounted) AppToast.error(context, 'Backup failed: $e');
     }
     if (mounted) setState(() => _backingUp = false);
+  }
+
+  Future<void> _clearOldData() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: const Text('Clear Old Data?',
+            style: TextStyle(
+                color: AppColors.textPrimary, fontWeight: FontWeight.w700)),
+        content: const Text(
+          'Permanently deletes all bookings and waiting-list entries for '
+          'past dates from Firestore. This cannot be undone — make sure '
+          "you've backed up first. History stays in the Google Sheet either way.",
+          style: TextStyle(color: AppColors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel',
+                style: TextStyle(color: AppColors.primary)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.error, foregroundColor: Colors.white),
+            child: const Text('Clear Old Data'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    setState(() => _clearing = true);
+    try {
+      final deleted = await CleanupService.runNow();
+      if (!mounted) return;
+      setState(() => _lastCleanupAt = DateTime.now());
+      AppToast.success(context,
+          deleted == 0 ? 'Nothing to clear' : 'Cleared $deleted old record${deleted == 1 ? '' : 's'}');
+    } catch (e) {
+      if (mounted) AppToast.error(context, 'Clear failed: $e');
+    }
+    if (mounted) setState(() => _clearing = false);
   }
 
   @override
@@ -208,14 +287,15 @@ class _BackupScreenState extends State<BackupScreen> {
           ),
           const SizedBox(height: 20),
           const Text(
-            'Exports all booking/waiting-list logs and admin requests as CSV '
-            'files (opens directly in Excel or Google Sheets) and shares them '
-            'so you can save a copy.',
+            'Exports a snapshot of current classes, facilities, class types, '
+            'and bookings as CSV — pick which ones you need. Past event '
+            'history (cancellations, waitlist activity, transactions) '
+            'already lives in the Google Sheet, not here.',
             style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
           ),
           const SizedBox(height: 16),
           ElevatedButton.icon(
-            onPressed: _backingUp ? null : _runBackup,
+            onPressed: _backingUp ? null : _pickModulesAndBackup,
             icon: _backingUp
                 ? const SizedBox(
                     width: 18,
@@ -228,8 +308,93 @@ class _BackupScreenState extends State<BackupScreen> {
             style: ElevatedButton.styleFrom(
                 minimumSize: const Size(double.infinity, 48)),
           ),
+          const SizedBox(height: 28),
+          const Divider(height: 1),
+          const SizedBox(height: 20),
+          Text(
+            _loadingStatus
+                ? 'Checking last clear…'
+                : (_lastCleanupAt == null
+                    ? 'Old data has never been cleared'
+                    : 'Last cleared: ${_fmtDate(_lastCleanupAt!)}'),
+            style: const TextStyle(
+                fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Permanently removes bookings and waiting-list entries for past '
+            'dates from Firestore — they stay recorded in the Google Sheet. '
+            'Back up first if you want a local copy before clearing.',
+            style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: 16),
+          OutlinedButton.icon(
+            onPressed: _clearing ? null : _clearOldData,
+            icon: _clearing
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: AppColors.error),
+                  )
+                : const Icon(Icons.delete_outline, color: AppColors.error),
+            label: Text(_clearing ? 'Clearing…' : 'Clear Old Data',
+                style: const TextStyle(color: AppColors.error)),
+            style: OutlinedButton.styleFrom(
+                minimumSize: const Size(double.infinity, 48),
+                side: const BorderSide(color: AppColors.error)),
+          ),
         ],
       ),
+    );
+  }
+}
+
+class _ModulePickerDialog extends StatefulWidget {
+  final List<_BackupModule> modules;
+  const _ModulePickerDialog({required this.modules});
+
+  @override
+  State<_ModulePickerDialog> createState() => _ModulePickerDialogState();
+}
+
+class _ModulePickerDialogState extends State<_ModulePickerDialog> {
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: AppColors.card,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      title: const Text('What do you want to back up?',
+          style: TextStyle(
+              color: AppColors.textPrimary, fontWeight: FontWeight.w700)),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: widget.modules
+              .map((m) => CheckboxListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(m.label,
+                        style: const TextStyle(color: AppColors.textPrimary)),
+                    value: m.selected,
+                    activeColor: AppColors.primary,
+                    onChanged: (v) => setState(() => m.selected = v ?? false),
+                  ))
+              .toList(),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel', style: TextStyle(color: AppColors.textMuted)),
+        ),
+        ElevatedButton(
+          onPressed: () => Navigator.pop(
+              context, widget.modules.where((m) => m.selected).toList()),
+          child: const Text('Back Up Selected'),
+        ),
+      ],
     );
   }
 }

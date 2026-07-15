@@ -67,8 +67,9 @@ class ClassService {
     final start = DateTime(date.year, date.month, date.day);
     final end = start.add(const Duration(days: 1));
     return snap.docs.where((d) {
-      if (d['status'] == 'cancelled_by_trainer') return false;
-      final bd = d['bookingDate'];
+      final data = d.data();
+      if (data['status'] == 'cancelled_by_trainer') return false;
+      final bd = data['bookingDate'];
       if (bd == null) return false;
       final dt = (bd as Timestamp).toDate();
       return !dt.isBefore(start) && dt.isBefore(end);

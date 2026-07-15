@@ -292,8 +292,9 @@ class _SessionCard extends StatelessWidget {
                     session.date.year, session.date.month, session.date.day);
                 final end = start.add(const Duration(days: 1));
                 final count = snap.data?.docs.where((d) {
-                      if (d['status'] == 'cancelled_by_trainer') return false;
-                      final bd = d['bookingDate'];
+                      final data = d.data() as Map<String, dynamic>;
+                      if (data['status'] == 'cancelled_by_trainer') return false;
+                      final bd = data['bookingDate'];
                       if (bd == null) return false;
                       final dt = (bd as Timestamp).toDate();
                       return !dt.isBefore(start) && dt.isBefore(end);

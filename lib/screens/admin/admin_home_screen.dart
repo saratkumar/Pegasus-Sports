@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import '../../models/user_model.dart';
 import '../../services/backup_service.dart';
 import '../../utils/app_colors.dart';
 import 'backup_screen.dart';
 import 'cash_payment_screen.dart';
 import 'class_management_screen.dart';
+import 'class_roster_screen.dart';
 import 'coupon_management_screen.dart';
 import 'facility_management_screen.dart';
 import 'plan_management_screen.dart';
@@ -14,7 +16,8 @@ import 'attendance_report_screen.dart';
 import 'transactions_screen.dart';
 
 class AdminHomeScreen extends StatefulWidget {
-  const AdminHomeScreen({super.key});
+  final UserModel? userModel;
+  const AdminHomeScreen({super.key, this.userModel});
 
   @override
   State<AdminHomeScreen> createState() => _AdminHomeScreenState();
@@ -158,6 +161,17 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
             subtitle: 'Month-wise log of bookings, cancellations & waitlist',
             page: const AttendanceReportScreen(),
           ),
+          if (widget.userModel?.isSuperAdmin == true) ...[
+            const SizedBox(height: 10),
+            _tile(
+              context,
+              icon: Icons.groups_outlined,
+              color: const Color(0xFF00D4AA),
+              title: 'Class Roster',
+              subtitle: 'Who signed up for which class, by day',
+              page: const ClassRosterScreen(),
+            ),
+          ],
           const SizedBox(height: 10),
           _tile(
             context,

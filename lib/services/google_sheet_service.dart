@@ -6,7 +6,7 @@ import '../models/appointment_model.dart';
 
 class GoogleSheetService {
   static Future<List<AppointmentModel>> getAppointments() async {
-    const appointmentCsvUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ36kUCLeGxTnjl99ES_YKdlWa-g8dsmzzthbbLvG3Av5GgeSDuhxgUK99i1L948HH9K-wfLYr43Cat/pub?gid=1174084799&single=true&output=csv";
+    const appointmentCsvUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT2irRooa5dp4VGfZrXxQNocmAzwi2hKBB8WCzoyqyljqsKhBUJecVWaxnCoIxEsKTf3jCJ9g8xutWi/pub?gid=1174084799&single=true&output=csv";
 
     final response = await http.get(
       Uri.parse(
@@ -42,7 +42,7 @@ class GoogleSheetService {
   }
 
   static const String csvUrl =
-      "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ36kUCLeGxTnjl99ES_YKdlWa-g8dsmzzthbbLvG3Av5GgeSDuhxgUK99i1L948HH9K-wfLYr43Cat/pub?gid=0&single=true&output=csv";
+      "https://docs.google.com/spreadsheets/d/e/2PACX-1vT2irRooa5dp4VGfZrXxQNocmAzwi2hKBB8WCzoyqyljqsKhBUJecVWaxnCoIxEsKTf3jCJ9g8xutWi/pub?gid=0&single=true&output=csv";
 
   static Future<List<ClassModel>> getClasses() async {
     final response = await http.get(

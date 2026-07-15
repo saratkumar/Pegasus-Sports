@@ -18,7 +18,7 @@ class _LoginScreenState extends State<LoginScreen> {
   // Emails that always get super_admin on first login.
   // Remove or clear this list when going to production.
   static const _superAdminEmails = <String>[
-    'msaratkumar3@gmail.com',
+    'admin.psas@gmail.com',
   ];
 
   Future<void> _signInWithGoogle() async {

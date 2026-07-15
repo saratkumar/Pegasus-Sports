@@ -393,25 +393,13 @@ class _UserEditSheet extends StatefulWidget {
 
 class _UserEditSheetState extends State<_UserEditSheet> {
   late String _role;
-  late String? _adminLevel;
-  late List<String> _permissions;
   late TextEditingController _creditsCtrl;
   bool _saving = false;
-
-  static const _allPermissions = [
-    'manage_classes',
-    'manage_facilities',
-    'manage_users',
-    'manage_credits',
-    'approve_requests',
-  ];
 
   @override
   void initState() {
     super.initState();
     _role = widget.user.role;
-    _adminLevel = widget.user.adminLevel;
-    _permissions = List.from(widget.user.adminPermissions);
     _creditsCtrl =
         TextEditingController(text: widget.user.credits.toString());
   }
@@ -431,8 +419,8 @@ class _UserEditSheetState extends State<_UserEditSheet> {
     await UserService.updateRole(
       widget.user.uid,
       _role,
-      adminLevel: _role == 'admin' ? _adminLevel : null,
-      adminPermissions: _role == 'admin' ? _permissions : [],
+      adminLevel: _role == 'admin' ? 'super_admin' : null,
+      adminPermissions: const [],
     );
 
     if (creditDiff != 0) {
@@ -531,63 +519,8 @@ class _UserEditSheetState extends State<_UserEditSheet> {
             const SizedBox(height: 8),
             _RoleSelector(
               selected: _role,
-              onChanged: (r) => setState(() {
-                _role = r;
-                if (r != 'admin') {
-                  _adminLevel = null;
-                  _permissions = [];
-                }
-              }),
+              onChanged: (r) => setState(() => _role = r),
             ),
-            if (_role == 'admin') ...[
-              const SizedBox(height: 16),
-              const Text('Admin Level',
-                  style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textSecondary)),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                children: ['super_admin', 'admin'].map((level) {
-                  final selected = _adminLevel == level;
-                  return ChoiceChip(
-                    label: Text(level == 'super_admin'
-                        ? 'Super Admin'
-                        : 'Admin'),
-                    selected: selected,
-                    onSelected: (_) =>
-                        setState(() => _adminLevel = level),
-                  );
-                }).toList(),
-              ),
-              if (_adminLevel != 'super_admin') ...[
-                const SizedBox(height: 16),
-                const Text('Permissions',
-                    style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textSecondary)),
-                const SizedBox(height: 4),
-                ..._allPermissions.map((p) => CheckboxListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(p.replaceAll('_', ' '),
-                          style: const TextStyle(
-                              fontSize: 13,
-                              color: AppColors.textPrimary)),
-                      value: _permissions.contains(p),
-                      activeColor: AppColors.primary,
-                      onChanged: (v) => setState(() {
-                        if (v == true) {
-                          _permissions.add(p);
-                        } else {
-                          _permissions.remove(p);
-                        }
-                      }),
-                    )),
-              ],
-            ],
             const SizedBox(height: 16),
             const Text('Credits',
                 style: TextStyle(
@@ -644,7 +577,6 @@ class _CreateUserSheetState extends State<_CreateUserSheet> {
   final _email = TextEditingController();
   final _phone = TextEditingController();
   String _role = 'client';
-  String? _adminLevel;
   bool _saving = false;
 
   @override
@@ -665,7 +597,7 @@ class _CreateUserSheetState extends State<_CreateUserSheet> {
         phone: _phone.text.trim(),
         role: _role,
         initialCredits: 0,
-        adminLevel: _role == 'admin' ? _adminLevel : null,
+        adminLevel: _role == 'admin' ? 'super_admin' : null,
       );
       if (mounted) {
         Navigator.pop(context);
@@ -731,33 +663,8 @@ class _CreateUserSheetState extends State<_CreateUserSheet> {
               const SizedBox(height: 8),
               _RoleSelector(
                 selected: _role,
-                onChanged: (r) => setState(() {
-                  _role = r;
-                  if (r != 'admin') _adminLevel = null;
-                }),
+                onChanged: (r) => setState(() => _role = r),
               ),
-              if (_role == 'admin') ...[
-                const SizedBox(height: 12),
-                const Text('Admin Level',
-                    style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textSecondary)),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  children: ['super_admin', 'admin'].map((level) {
-                    final sel = _adminLevel == level;
-                    return ChoiceChip(
-                      label: Text(
-                          level == 'super_admin' ? 'Super Admin' : 'Admin'),
-                      selected: sel,
-                      onSelected: (_) =>
-                          setState(() => _adminLevel = level),
-                    );
-                  }).toList(),
-                ),
-              ],
               const SizedBox(height: 20),
               SizedBox(
                 width: double.infinity,

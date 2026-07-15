@@ -1,5 +1,7 @@
+import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import '../../models/membership_plan_model.dart';
 import '../../models/user_model.dart';
 import '../../services/invoice_pdf_service.dart';
@@ -29,12 +31,14 @@ class _CashPaymentScreenState extends State<CashPaymentScreen> {
   MembershipPlanModel? _selectedPlan;
   late final TextEditingController _amount;
   late final TextEditingController _credits;
+  late final TextEditingController _invoiceNumber;
 
   @override
   void initState() {
     super.initState();
     _amount = TextEditingController();
     _credits = TextEditingController();
+    _invoiceNumber = TextEditingController();
     _loadData();
   }
 
@@ -42,7 +46,47 @@ class _CashPaymentScreenState extends State<CashPaymentScreen> {
   void dispose() {
     _amount.dispose();
     _credits.dispose();
+    _invoiceNumber.dispose();
     super.dispose();
+  }
+
+  /// Reserves a fresh invoice number with no payment attached yet — for
+  /// handing to a client before cash actually changes hands. Not persisted
+  /// anywhere; the admin notes it down (or pastes it straight into the
+  /// field below) and it's only recorded once a payment is actually filed.
+  void _generateInvoiceNumber() {
+    final seed = '${DateTime.now().microsecondsSinceEpoch}'
+        '${Random().nextInt(999999)}';
+    final number = InvoiceService.generateInvoiceNumber(seed);
+    setState(() => _invoiceNumber.text = number);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: const Text('Invoice Number Reserved',
+            style: TextStyle(
+                color: AppColors.textPrimary, fontWeight: FontWeight.w700)),
+        content: SelectableText(number,
+            style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+                color: AppColors.primary)),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: number));
+              AppToast.info(context, 'Copied to clipboard');
+            },
+            child: const Text('Copy'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Done'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _loadData() async {
@@ -112,7 +156,9 @@ class _CashPaymentScreenState extends State<CashPaymentScreen> {
 
       final txRef = FirebaseFirestore.instance.collection('transactions').doc();
       final paymentRef = 'cash_${txRef.id}';
-      final invoiceNumber = InvoiceService.generateInvoiceNumber(paymentRef);
+      final reused = _invoiceNumber.text.trim();
+      final invoiceNumber =
+          reused.isNotEmpty ? reused : InvoiceService.generateInvoiceNumber(paymentRef);
 
       await txRef.set({
         'invoiceNumber': invoiceNumber,
@@ -156,6 +202,7 @@ class _CashPaymentScreenState extends State<CashPaymentScreen> {
           _selectedPlan = null;
           _amount.clear();
           _credits.clear();
+          _invoiceNumber.clear();
         });
       }
 
@@ -273,6 +320,31 @@ class _CashPaymentScreenState extends State<CashPaymentScreen> {
                     style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
                   ),
                 ],
+                const SizedBox(height: 16),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: TextFormField(
+                        controller: _invoiceNumber,
+                        decoration: InputDecoration(
+                          labelText: 'Invoice Number (optional)',
+                          helperText:
+                              'Leave blank to auto-generate, or paste one reserved earlier',
+                          border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10)),
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 12),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    OutlinedButton(
+                      onPressed: _generateInvoiceNumber,
+                      child: const Text('Generate'),
+                    ),
+                  ],
+                ),
                 const SizedBox(height: 20),
                 ElevatedButton(
                   onPressed: _saving ? null : _submit,

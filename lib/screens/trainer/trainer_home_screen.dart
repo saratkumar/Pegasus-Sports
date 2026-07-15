@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -5,6 +6,7 @@ import '../../models/class_model.dart';
 import '../../models/admin_request_model.dart';
 import '../../models/user_model.dart';
 import '../../services/class_service.dart';
+import '../../services/config_service.dart';
 import '../../services/user_service.dart';
 import '../../services/notifications.dart';
 import '../../utils/app_colors.dart';
@@ -160,6 +162,19 @@ class _TrainerHomeScreenState extends State<TrainerHomeScreen> {
           createdAt: DateTime.now(),
         ).toFirestore(),
       );
+      unawaited(ConfigService.logActivityEvent(
+        eventType: 'Session Cancel Requested',
+        classId: cls.effectiveId,
+        className: cls.mode,
+        sessionDate: DateTime.parse(dateStr),
+        sessionTime: cls.startTime,
+        userId: me.uid,
+        userName: _trainerName.isNotEmpty
+            ? _trainerName
+            : (me.displayName ?? me.email ?? ''),
+        bookedByRole: 'trainer',
+        creditsUsed: 0,
+      ));
 
       await NotificationService.showNewAdminRequest('session_cancel');
 
@@ -235,6 +250,17 @@ class _TrainerHomeScreenState extends State<TrainerHomeScreen> {
         createdAt: DateTime.now(),
       ).toFirestore(),
     );
+    unawaited(ConfigService.logActivityEvent(
+      eventType: 'Slot Increase Requested',
+      classId: cls.effectiveId,
+      className: cls.mode,
+      sessionDate: DateTime.parse(dateStr),
+      sessionTime: cls.startTime,
+      userId: me.uid,
+      userName: me.displayName ?? me.email ?? '',
+      bookedByRole: 'trainer',
+      creditsUsed: result,
+    ));
     await NotificationService.showNewAdminRequest('slot_increase');
     if (mounted) AppToast.success(context, 'Slot increase request sent to admin');
   }
@@ -287,6 +313,18 @@ class _TrainerHomeScreenState extends State<TrainerHomeScreen> {
             createdAt: DateTime.now(),
           ).toFirestore(),
         );
+        unawaited(ConfigService.logActivityEvent(
+          eventType: 'Credit Request Submitted',
+          classId: cls.effectiveId,
+          className: cls.mode,
+          sessionDate: DateTime.now(),
+          sessionTime: cls.startTime,
+          userId: me.uid,
+          userName: me.displayName ?? me.email ?? '',
+          bookedByRole: 'trainer',
+          creditsUsed: 1,
+          note: 'For client: ${selected.name}',
+        ));
         await NotificationService.showNewAdminRequest('credit_request');
         if (mounted) {
           AppToast.success(context, 'Credit request sent to admin for ${selected.name}');
@@ -296,7 +334,7 @@ class _TrainerHomeScreenState extends State<TrainerHomeScreen> {
     }
 
     final me = FirebaseAuth.instance.currentUser!;
-    await FirebaseFirestore.instance.collection('bookings').add({
+    final bookingRef = await FirebaseFirestore.instance.collection('bookings').add({
       'userId': selected.uid,
       'classId': cls.effectiveId,
       'displayName': cls.mode,
@@ -309,6 +347,17 @@ class _TrainerHomeScreenState extends State<TrainerHomeScreen> {
       'bookedByRole': 'trainer',
       'creditsUsed': 1,
     });
+    unawaited(ConfigService.logActivityEvent(
+      eventType: 'Booked',
+      classId: cls.effectiveId,
+      className: cls.mode,
+      sessionDate: _selectedDate,
+      sessionTime: cls.startTime,
+      userId: selected.uid,
+      userName: selected.name,
+      bookedByRole: 'trainer',
+      bookingId: bookingRef.id,
+    ));
     await UserService.deductCredit(selected.uid);
     if (mounted) AppToast.success(context, '${cls.mode} booked for ${selected.name}');
   }
@@ -449,7 +498,7 @@ class _TrainerClassCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final capacity = int.tryParse(cls.groupSize) ?? 0;
+    final capacity = cls.effectiveCapacity(date);
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
       padding: const EdgeInsets.all(16),

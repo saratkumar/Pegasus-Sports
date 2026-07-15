@@ -4,7 +4,7 @@ import 'package:http/http.dart' as http;
 class ConfigService {
   // After deploying your Apps Script, paste the /exec URL here.
   // Apps Script → Deploy → New deployment → Web app → Execute as Me → Anyone → Deploy
-  static const _scriptUrl = 'https://script.google.com/macros/s/AKfycbw2X5iVPGyTJTsV-e3epeOjeIMztjo5s1ZcVWWWqiEQqhz6znHVv_-4wN0kykQl4Adg/exec';
+  static const _scriptUrl = 'https://script.google.com/macros/s/AKfycbydwLGW4VcwkXVi5yiUmH10pPSk1Ro-EgkaixIk1ImvnxbMKUEA_SpQ4IMec0ssbNgr/exec';
 
   static Map<String, String>? _cache;
   static List<Map<String, String>>? _facilitiesCache;
@@ -130,6 +130,81 @@ class ConfigService {
     final uri = Uri.parse(_scriptUrl).replace(
         queryParameters: {'action': action, ...params});
     await http.get(uri).timeout(const Duration(seconds: 10));
+  }
+
+  // ── Activity Log ───────────────────────────────────────────────────────────
+
+  /// Shared YYYY-MM-DD formatter — keep the write side and read side in sync.
+  static String dateKey(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  /// Mirrors a booking/request-lifecycle event into the ActivityLog Google
+  /// Sheet tab. Firestore remains the source of truth for anything still
+  /// pending — this must never throw into the calling flow, so all errors
+  /// are swallowed and reported back as `false` instead. Callers that need
+  /// to archive-then-delete a Firestore record should only delete once this
+  /// returns `true`; on `false`, keep the Firestore record as a fallback
+  /// rather than losing the only copy of the event.
+  static Future<bool> logActivityEvent({
+    required String eventType,
+    required String classId,
+    required String className,
+    required DateTime sessionDate,
+    required String sessionTime,
+    required String userId,
+    required String userName,
+    required String bookedByRole,
+    int creditsUsed = 1,
+    String bookingId = '',
+    String note = '',
+  }) async {
+    try {
+      final uri = Uri.parse(_scriptUrl).replace(queryParameters: {
+        'action': 'log_activity',
+        'eventType': eventType,
+        'classId': classId,
+        'className': className,
+        'sessionDate': dateKey(sessionDate),
+        'sessionTime': sessionTime,
+        'userId': userId,
+        'userName': userName,
+        'bookedByRole': bookedByRole,
+        'creditsUsed': creditsUsed.toString(),
+        'bookingId': bookingId,
+        'note': note,
+      });
+      final response = await http.get(uri).timeout(const Duration(seconds: 10));
+      return response.statusCode == 200;
+    } catch (_) {
+      // Best-effort mirror only — never surface to the caller.
+      return false;
+    }
+  }
+
+  /// Fetches ActivityLog rows, filtered by [date] (one day), [userId]
+  /// (all-time for that person), or both. Returns [] on any failure so
+  /// callers degrade to an empty state instead of crashing.
+  static Future<List<Map<String, String>>> getActivityLog({
+    DateTime? date,
+    String? userId,
+  }) async {
+    try {
+      final uri = Uri.parse(_scriptUrl).replace(queryParameters: {
+        'action': 'get_activity_log',
+        if (date != null) 'date': dateKey(date),
+        if (userId != null) 'userId': userId,
+      });
+      final response = await http.get(uri).timeout(const Duration(seconds: 15));
+      if (response.statusCode != 200) return [];
+      final data = jsonDecode(response.body);
+      if (data is! List) return [];
+      return data
+          .map<Map<String, String>>((e) =>
+              (e as Map).map((k, v) => MapEntry(k.toString(), v.toString())))
+          .toList();
+    } catch (_) {
+      return [];
+    }
   }
 
   // ── Transactions ──────────────────────────────────────────────────────────────

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -91,6 +92,15 @@ class _MembershipScreenState extends State<MembershipScreen> {
 
       final currentUser = FirebaseAuth.instance.currentUser;
       final invoiceNumber = InvoiceService.generateInvoiceNumber(paymentRef);
+
+      // Stripe's PaymentIntent description was set to the plan name at
+      // creation (before the invoice number existed) — overwrite it now so
+      // the Dashboard reflects the real invoice number. Skip for coupon-only
+      // purchases, which never created a real PaymentIntent.
+      if (finalAmount > 0) {
+        unawaited(
+            PaymentService.setInvoiceDescription(paymentRef, invoiceNumber));
+      }
 
       // Write to Firestore transactions collection (primary source for admin UI)
       final txDoc = await FirebaseFirestore.instance.collection('transactions').add({

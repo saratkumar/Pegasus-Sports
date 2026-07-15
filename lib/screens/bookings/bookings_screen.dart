@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../models/waiting_list_model.dart';
+import '../../services/config_service.dart';
 import '../../services/user_service.dart';
 import '../../services/waiting_list_service.dart';
 import '../../utils/app_colors.dart';
@@ -108,6 +110,18 @@ class _BookingsTab extends StatelessWidget {
     final dn = data['displayName']?.toString() ?? '';
     if (classId.isNotEmpty && bd != null) {
       final bookingDate = (bd as Timestamp).toDate();
+      unawaited(ConfigService.logActivityEvent(
+        eventType: 'Cancelled by Client',
+        classId: classId,
+        className: dn,
+        sessionDate: bookingDate,
+        sessionTime: bt,
+        userId: uid,
+        userName: FirebaseAuth.instance.currentUser?.displayName ?? uid,
+        bookedByRole: data['bookedByRole']?.toString() ?? 'client',
+        creditsUsed: creditsUsed,
+        bookingId: id,
+      ));
       await WaitingListService.admitNextFromWaitingList(
         classId: classId,
         bookingDate: bookingDate,

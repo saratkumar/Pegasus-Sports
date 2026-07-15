@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -5,6 +6,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 
 import '../../models/class_model.dart';
 import '../../services/class_service.dart';
+import '../../services/config_service.dart';
 import '../../services/user_service.dart';
 import '../../services/waiting_list_service.dart';
 import '../../services/email_service.dart';
@@ -144,7 +146,8 @@ class _ClassesScreenState extends State<ClassesScreen> {
       }
 
       // Create booking
-      await FirebaseFirestore.instance.collection('bookings').add({
+      final bookingRef =
+          await FirebaseFirestore.instance.collection('bookings').add({
         'userId': uid,
         'classId': classId,
         'displayName': cls.mode,
@@ -158,6 +161,18 @@ class _ClassesScreenState extends State<ClassesScreen> {
         'creditsUsed': 1,
       });
 
+      unawaited(ConfigService.logActivityEvent(
+        eventType: 'Booked',
+        classId: classId,
+        className: cls.mode,
+        sessionDate: _selectedDate,
+        sessionTime: cls.startTime,
+        userId: uid,
+        userName: FirebaseAuth.instance.currentUser?.displayName ?? uid,
+        bookedByRole: 'client',
+        bookingId: bookingRef.id,
+      ));
+
       await UserService.deductCredit(uid);
 
       final userDoc = await FirebaseFirestore.instance
@@ -170,11 +185,19 @@ class _ClassesScreenState extends State<ClassesScreen> {
               : (userDoc.data()?['email']?.toString() ?? '');
 
       if (email.isNotEmpty) {
-        await EmailService.sendBookingEmail(
-          email: email,
-          className: cls.mode,
-          classTime: cls.startTime,
-        );
+        try {
+          await EmailService.sendBookingEmail(
+            email: email,
+            className: cls.mode,
+            classTime: cls.startTime,
+          );
+        } catch (e) {
+          debugPrint('Booking email failed: $e');
+          if (context.mounted) {
+            AppToast.warning(
+                context, 'Booked, but confirmation email failed: $e');
+          }
+        }
       }
 
       await NotificationService.showBookingConfirmed(cls.mode);
@@ -700,14 +723,16 @@ class _CapacitySectionState extends State<_CapacitySection> {
         final allDocs = snap.data?.docs ?? [];
         final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
         final todayDocs = allDocs.where((d) {
-          if (d['status'] == 'cancelled_by_trainer') return false;
-          final bd = d['bookingDate'];
+          final data = d.data() as Map<String, dynamic>;
+          if (data['status'] == 'cancelled_by_trainer') return false;
+          final bd = data['bookingDate'];
           if (bd == null) return false;
           final dt = (bd as Timestamp).toDate();
           return !dt.isBefore(startOfDay) && dt.isBefore(endOfDay);
         }).toList();
         final booked = todayDocs.length;
-        final alreadyBooked = todayDocs.any((d) => d['userId'] == currentUid);
+        final alreadyBooked = todayDocs
+            .any((d) => (d.data() as Map<String, dynamic>)['userId'] == currentUid);
         final capacity = int.tryParse(widget.groupSize) ?? 0;
         final isFull = capacity > 0 && booked >= capacity;
         final pct = capacity > 0 ? (booked / capacity).clamp(0.0, 1.0) : 0.0;

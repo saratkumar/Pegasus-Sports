@@ -7,29 +7,25 @@ class EmailService {
     required String className,
     required String classTime,
   }) async {
-    try {
-      print('SENDING EMAIL TO: $email FOR CLASS: $className AT $classTime');
+    final response = await http.post(
+      Uri.parse('https://api.emailjs.com/api/v1.0/email/send'),
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode({
+        'service_id': 'service_c3f4xqd',
+        'template_id': 'template_8ok497i',
+        'user_id': 'TJRGXai7XBmcWxZi3',
+        'accessToken': 'Xdnxx6kOkdoFnab610h80',
+        'template_params': {
+          'name': 'Fitness Booking',
+          'email': email,
+          'class_name': className,
+          'class_time': classTime,
+        },
+      }),
+    );
 
-      final response = await http.post(
-        Uri.parse('https://api.emailjs.com/api/v1.0/email/send'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({
-          'service_id': 'service_g0q5hfl',
-          'template_id': 'template_2r5pqup',
-          'user_id': 'Ort5sgLfVKcJY8t5F',
-          'accessToken': 'NvcX-qpDAzBVmKRmnPcIJ',
-          'template_params': {
-            'name': 'Fitness Booking',
-            'email': email,
-            'class_name': className,
-            'class_time': classTime,
-          },
-        }),
-      );
-
-      print('EMAIL RESPONSE: ${response.statusCode} ${response.body}');
-    } catch (e) {
-      print('EMAIL ERROR: $e');
+    if (response.statusCode != 200) {
+      throw Exception('EmailJS ${response.statusCode}: ${response.body}');
     }
   }
 }
