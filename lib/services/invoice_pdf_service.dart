@@ -1,14 +1,17 @@
 import 'dart:io';
+import 'dart:typed_data';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
 
-/// Builds a downloadable PDF invoice and opens the OS share sheet so the
-/// user can save/send it — used as the primary invoice delivery mechanism
-/// instead of depending on the (currently unconfigured) EmailJS email step.
+const _supportEmail = 'admin.psas@gmail.com';
+
+/// Builds the PDF invoice document — as raw bytes for emailing as an
+/// attachment, or shared via the OS share sheet for a manual download.
 class InvoicePdfService {
-  static Future<void> shareInvoice({
+  static Future<Uint8List> buildBytes({
     required String invoiceNumber,
     String? paymentRef,
     required String clientName,
@@ -24,6 +27,9 @@ class InvoicePdfService {
     final dateStr =
         '${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year}';
 
+    final logoBytes = await rootBundle.load('assets/images/logo.png');
+    final logoImage = pw.MemoryImage(logoBytes.buffer.asUint8List());
+
     final doc = pw.Document();
     doc.addPage(
       pw.Page(
@@ -36,9 +42,15 @@ class InvoicePdfService {
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
-                  pw.Text('PSAS',
-                      style: pw.TextStyle(
-                          fontSize: 24, fontWeight: pw.FontWeight.bold)),
+                  pw.Row(
+                    children: [
+                      pw.Image(logoImage, width: 36, height: 36),
+                      pw.SizedBox(width: 10),
+                      pw.Text('PSAS',
+                          style: pw.TextStyle(
+                              fontSize: 24, fontWeight: pw.FontWeight.bold)),
+                    ],
+                  ),
                   pw.Column(
                     crossAxisAlignment: pw.CrossAxisAlignment.end,
                     children: [
@@ -104,13 +116,46 @@ class InvoicePdfService {
               pw.SizedBox(height: 32),
               pw.Text('Thank you for your business.',
                   style: const pw.TextStyle(fontSize: 11, color: PdfColors.grey700)),
+              pw.SizedBox(height: 4),
+              pw.Text('Questions or clarifications: $_supportEmail',
+                  style: const pw.TextStyle(fontSize: 11, color: PdfColors.grey700)),
             ],
           );
         },
       ),
     );
 
-    final bytes = await doc.save();
+    return doc.save();
+  }
+
+  /// Manual on-demand download via the OS share sheet — not used by the
+  /// automatic purchase flows (those email the PDF as an attachment
+  /// instead, see InvoiceService), kept for a future "resend/download"
+  /// admin action.
+  static Future<void> shareInvoice({
+    required String invoiceNumber,
+    String? paymentRef,
+    required String clientName,
+    required String clientEmail,
+    required String planName,
+    required int credits,
+    required double amount,
+    required String currency,
+    String? couponCode,
+    double? originalAmount,
+  }) async {
+    final bytes = await buildBytes(
+      invoiceNumber: invoiceNumber,
+      paymentRef: paymentRef,
+      clientName: clientName,
+      clientEmail: clientEmail,
+      planName: planName,
+      credits: credits,
+      amount: amount,
+      currency: currency,
+      couponCode: couponCode,
+      originalAmount: originalAmount,
+    );
     final dir = await getTemporaryDirectory();
     final file = File('${dir.path}/$invoiceNumber.pdf');
     await file.writeAsBytes(bytes);

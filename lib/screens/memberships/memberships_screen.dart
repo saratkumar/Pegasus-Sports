@@ -123,9 +123,8 @@ class _MembershipScreenState extends State<MembershipScreen> {
         'createdAt': FieldValue.serverTimestamp(),
       });
 
-      // Best-effort background attempt: write to the Google Sheet and email
-      // the invoice if EmailJS happens to be configured. Silent either way —
-      // the PDF below is the actual invoice delivery method for now.
+      // Best-effort background attempt: mirror to the Google Sheet and
+      // email the PDF invoice.
       InvoiceService.processWithInvoice(
         invoiceNumber: invoiceNumber,
         paymentIntentId: paymentRef,
@@ -136,6 +135,8 @@ class _MembershipScreenState extends State<MembershipScreen> {
         amount: finalAmount,
         currency: 'SGD',
         displayPaymentRef: paymentRef,
+        couponCode: coupon?.code,
+        originalAmount: coupon != null ? plan.price : null,
       ).then((result) {
         final (emailSent, error) = result;
         return txDoc.update({
