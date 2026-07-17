@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/qr_payment_request_model.dart';
 import '../models/user_model.dart';
+import 'config_service.dart';
 import 'invoice_service.dart';
 import 'request_notification_service.dart';
 import 'user_service.dart';
@@ -152,12 +153,35 @@ class QrPaymentService {
       });
     }).catchError((_) {});
 
-    await _requestsCol.doc(req.id).update({
-      'status': 'approved',
-      'resolvedAt': Timestamp.now(),
-      'resolvedBy': adminUid,
-      if (paymentRef != null && paymentRef.isNotEmpty) 'paymentRef': paymentRef,
-    });
+    // Once resolved, this doc's job is done — archive it to the Sheet's
+    // ActivityLog (same pattern as credit/slot-increase requests) and
+    // remove it from Firestore rather than leaving it there forever. The
+    // transaction record itself already lives on permanently in the
+    // `transactions` collection and the Sheet's Transactions tab, so
+    // nothing about the payment history is lost.
+    final archived = await ConfigService.logActivityEvent(
+      eventType: 'QR Payment Approved',
+      classId: '',
+      className: req.planName,
+      sessionDate: DateTime.now(),
+      sessionTime: '',
+      userId: req.userId,
+      userName: req.userName,
+      bookedByRole: 'client',
+      creditsUsed: req.credits,
+      note: '${req.currency} ${req.amount.toStringAsFixed(2)}'
+          '${paymentRef != null && paymentRef.isNotEmpty ? ' · Ref: $paymentRef' : ''}',
+    );
+    if (archived) {
+      await _requestsCol.doc(req.id).delete();
+    } else {
+      await _requestsCol.doc(req.id).update({
+        'status': 'approved',
+        'resolvedAt': Timestamp.now(),
+        'resolvedBy': adminUid,
+        if (paymentRef != null && paymentRef.isNotEmpty) 'paymentRef': paymentRef,
+      });
+    }
 
     await RequestNotificationService.notifyRequesterOfResolution(
       requesterUid: req.userId,
@@ -168,11 +192,29 @@ class QrPaymentService {
 
   static Future<void> reject(QrPaymentRequestModel req) async {
     final adminUid = FirebaseAuth.instance.currentUser?.uid ?? '';
-    await _requestsCol.doc(req.id).update({
-      'status': 'rejected',
-      'resolvedAt': Timestamp.now(),
-      'resolvedBy': adminUid,
-    });
+
+    final archived = await ConfigService.logActivityEvent(
+      eventType: 'QR Payment Rejected',
+      classId: '',
+      className: req.planName,
+      sessionDate: DateTime.now(),
+      sessionTime: '',
+      userId: req.userId,
+      userName: req.userName,
+      bookedByRole: 'client',
+      creditsUsed: req.credits,
+      note: '${req.currency} ${req.amount.toStringAsFixed(2)}',
+    );
+    if (archived) {
+      await _requestsCol.doc(req.id).delete();
+    } else {
+      await _requestsCol.doc(req.id).update({
+        'status': 'rejected',
+        'resolvedAt': Timestamp.now(),
+        'resolvedBy': adminUid,
+      });
+    }
+
     await RequestNotificationService.notifyRequesterOfResolution(
       requesterUid: req.userId,
       typeLabel: 'QR Payment (${req.planName})',
