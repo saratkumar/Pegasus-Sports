@@ -13,6 +13,7 @@ import '../screens/admin/admin_requests_screen.dart';
 import '../screens/admin/user_management_screen.dart';
 import '../screens/admin/transactions_screen.dart';
 import '../screens/admin/activity_log_screen.dart';
+import '../screens/profile/profile_screen.dart';
 import '../utils/app_colors.dart';
 
 class BottomNav extends StatefulWidget {
@@ -90,10 +91,10 @@ class _BottomNavState extends State<BottomNav> {
           TrainerRequestsScreen(),
         ];
       default:
-        return const [
-          TimetableScreen(),
-          BookingsScreen(),
-          MembershipScreen(),
+        return [
+          TimetableScreen(userModel: widget.userModel),
+          const BookingsScreen(),
+          const MembershipScreen(),
         ];
     }
   }
@@ -233,12 +234,49 @@ class _BottomNavState extends State<BottomNav> {
               tooltip: 'View As',
               onPressed: () => _showViewAsPicker(context),
             ),
-          if (user?.photoURL != null)
+          if (widget.userModel != null)
             Padding(
               padding: const EdgeInsets.only(right: 4),
-              child: CircleAvatar(
-                radius: 15,
-                backgroundImage: NetworkImage(user!.photoURL!),
+              child: GestureDetector(
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        ProfileScreen(userModel: widget.userModel!),
+                  ),
+                ),
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    CircleAvatar(
+                      radius: 15,
+                      backgroundColor:
+                          AppColors.primary.withValues(alpha: 0.15),
+                      backgroundImage: user?.photoURL != null
+                          ? NetworkImage(user!.photoURL!)
+                          : null,
+                      child: user?.photoURL == null
+                          ? const Icon(Icons.person,
+                              size: 16, color: AppColors.primary)
+                          : null,
+                    ),
+                    if ((widget.userModel!.phone ?? '').isEmpty)
+                      Positioned(
+                        right: -2,
+                        top: -2,
+                        child: Container(
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(
+                            color: AppColors.error,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                                color: AppColors.bg, width: 1.5),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ),
           IconButton(

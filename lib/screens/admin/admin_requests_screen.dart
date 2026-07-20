@@ -381,6 +381,16 @@ class _RequestList extends StatelessWidget {
           return const Center(
               child: CircularProgressIndicator(color: AppColors.primary));
         }
+        if (snap.hasError) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Text('Failed to load requests: ${snap.error}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: AppColors.error)),
+            ),
+          );
+        }
         var docs = snap.data?.docs ?? [];
         if (excludePending) {
           docs = docs
@@ -561,25 +571,17 @@ class _RequestCardState extends State<_RequestCard> {
             : req.note,
       );
 
-      // Appointment requests stay in Firestore (status-flipped, never
-      // deleted) — the client's Appointments screen reads this doc to show
-      // "Confirmed for you" / rejected state, unlike credit/slot-increase
-      // requests which only need the Sheet archive as their record.
-      if (archived && !isAppointment) {
-        await FirebaseFirestore.instance
-            .collection('adminRequests')
-            .doc(req.id)
-            .delete();
-      } else {
-        await FirebaseFirestore.instance
-            .collection('adminRequests')
-            .doc(req.id)
-            .update({
-          'status': approved ? 'approved' : 'rejected',
-          'resolvedAt': Timestamp.now(),
-          'resolvedBy': adminUid,
-        });
-      }
+      // Resolved requests stay in Firestore (status-flipped, never deleted)
+      // so they show up under Requests > Resolved — the Sheet archive above
+      // is an additional audit trail (Activity Log), not a replacement.
+      await FirebaseFirestore.instance
+          .collection('adminRequests')
+          .doc(req.id)
+          .update({
+        'status': approved ? 'approved' : 'rejected',
+        'resolvedAt': Timestamp.now(),
+        'resolvedBy': adminUid,
+      });
 
       unawaited(RequestNotificationService.notifyRequesterOfResolution(
         requesterUid: req.requestedBy,
@@ -593,7 +595,7 @@ class _RequestCardState extends State<_RequestCard> {
             approved
                 ? 'Request approved'
                 : 'Request rejected'
-                    '${archived ? '' : ' (kept in Firestore — archive to Sheet failed)'}');
+                    '${archived ? '' : ' (Activity Log archive failed — request still resolved)'}');
       }
     } catch (e) {
       if (mounted) AppToast.error(context, 'Failed: ${e.toString()}');
@@ -735,21 +737,14 @@ class _RequestCardState extends State<_RequestCard> {
         note: req.note,
       );
 
-      if (archived) {
-        await FirebaseFirestore.instance
-            .collection('adminRequests')
-            .doc(req.id)
-            .delete();
-      } else {
-        await FirebaseFirestore.instance
-            .collection('adminRequests')
-            .doc(req.id)
-            .update({
-          'status': 'approved_cancel',
-          'resolvedAt': Timestamp.now(),
-          'resolvedBy': adminUid,
-        });
-      }
+      await FirebaseFirestore.instance
+          .collection('adminRequests')
+          .doc(req.id)
+          .update({
+        'status': 'approved_cancel',
+        'resolvedAt': Timestamp.now(),
+        'resolvedBy': adminUid,
+      });
 
       unawaited(RequestNotificationService.notifyRequesterOfResolution(
         requesterUid: req.requestedBy,
@@ -761,7 +756,7 @@ class _RequestCardState extends State<_RequestCard> {
         AppToast.success(
             context,
             'Cancellation approved — bookings cancelled & credits refunded'
-            '${archived ? '' : ' (kept in Firestore — archive to Sheet failed)'}');
+            '${archived ? '' : ' (Activity Log archive failed — request still resolved)'}');
       }
     } catch (e, st) {
       debugPrint('_approveSessionCancel: $e\n$st');
@@ -824,22 +819,15 @@ class _RequestCardState extends State<_RequestCard> {
         note: 'Reassigned to ${selected.name}',
       );
 
-      if (archived) {
-        await FirebaseFirestore.instance
-            .collection('adminRequests')
-            .doc(req.id)
-            .delete();
-      } else {
-        await FirebaseFirestore.instance
-            .collection('adminRequests')
-            .doc(req.id)
-            .update({
-          'status': 'reassigned',
-          'resolvedAt': Timestamp.now(),
-          'resolvedBy': adminUid,
-          'newTrainer': selected.name,
-        });
-      }
+      await FirebaseFirestore.instance
+          .collection('adminRequests')
+          .doc(req.id)
+          .update({
+        'status': 'reassigned',
+        'resolvedAt': Timestamp.now(),
+        'resolvedBy': adminUid,
+        'newTrainer': selected.name,
+      });
 
       unawaited(RequestNotificationService.notifyRequesterOfResolution(
         requesterUid: req.requestedBy,
@@ -853,7 +841,7 @@ class _RequestCardState extends State<_RequestCard> {
         AppToast.success(
             context,
             'Session reassigned to ${selected.name}'
-            '${archived ? '' : ' (kept in Firestore — archive to Sheet failed)'}');
+            '${archived ? '' : ' (Activity Log archive failed — request still resolved)'}');
       }
     } catch (e, st) {
       debugPrint('_reassignTrainer: $e\n$st');

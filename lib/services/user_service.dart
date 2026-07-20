@@ -59,6 +59,19 @@ class UserService {
     });
   }
 
+  /// Self-service profile edit — name and phone only. Email is intentionally
+  /// not editable here (it's tied to the sign-in identity).
+  static Future<void> updateProfile({
+    required String uid,
+    required String name,
+    String? phone,
+  }) async {
+    await _db.collection('users').doc(uid).update({
+      'name': name,
+      'phone': phone,
+    });
+  }
+
   /// Creates a pre-registration invitation. When the invited email first
   /// signs in via Google, the login flow consumes this and applies the
   /// pre-set role, phone, and initial credits.
