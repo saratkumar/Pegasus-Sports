@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
@@ -10,18 +11,64 @@ import 'models/user_model.dart';
 import 'navigation/bottom_navigation.dart';
 import 'screens/login/login_screen.dart';
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  // Stripe SDK is initialized lazily by PaymentService on first payment
-  // attempt, rather than here, to keep cold-start memory/CPU down for
-  // clients who never open the payment flow.
-  await NotificationService.initialize();
-  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-    statusBarColor: Colors.transparent,
-    statusBarIconBrightness: Brightness.dark,
-  ));
-  runApp(const FitnessBookingApp());
+// TODO(debug): temporary startup instrumentation to surface the iOS white-screen
+// cause on-device (no Mac/Xcode console available). Remove once root-caused.
+void main() {
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+    String? startupError;
+    try {
+      await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform)
+          .timeout(const Duration(seconds: 15));
+    } catch (e) {
+      startupError = 'Firebase.initializeApp failed:\n$e';
+    }
+    // Stripe SDK is initialized lazily by PaymentService on first payment
+    // attempt, rather than here, to keep cold-start memory/CPU down for
+    // clients who never open the payment flow.
+    if (startupError == null) {
+      try {
+        await NotificationService.initialize().timeout(const Duration(seconds: 15));
+      } catch (e) {
+        startupError = 'NotificationService.initialize failed:\n$e';
+      }
+    }
+    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.dark,
+    ));
+    runApp(startupError == null
+        ? const FitnessBookingApp()
+        : _StartupErrorApp(message: startupError));
+  }, (error, stack) {
+    runApp(_StartupErrorApp(message: 'Uncaught error:\n$error\n\n$stack'));
+  });
+}
+
+class _StartupErrorApp extends StatelessWidget {
+  final String message;
+  const _StartupErrorApp({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        backgroundColor: Colors.white,
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: SingleChildScrollView(
+              child: Text(
+                message,
+                style: const TextStyle(color: Colors.red, fontSize: 13, fontFamily: 'monospace'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class FitnessBookingApp extends StatelessWidget {
