@@ -24,7 +24,7 @@ class TransactionsScreen extends StatefulWidget {
 class _TransactionsScreenState extends State<TransactionsScreen> {
   final _search = TextEditingController();
   String _query = '';
-  TimelineRange _range = TimelineRange.oneMonth;
+  DateTimeRange? _range;
   late Future<List<Map<String, String>>> _rowsFuture;
 
   @override
@@ -49,7 +49,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
 
   List<Map<String, String>> _filter(List<Map<String, String>> rows) {
     final inRange =
-        rows.where((r) => isWithinRange(r['date'], _range)).toList();
+        rows.where((r) => isWithinRange(r['date'], _range ?? defaultDateRange())).toList();
     if (_query.isEmpty) return inRange;
     return inRange.where((r) {
       final name = (r['clientName'] ?? '').toLowerCase();
@@ -175,12 +175,9 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
           // ── Timeline + search ────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 14, 14, 0),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: TimelineRangeSelector(
-                value: _range,
-                onChanged: (r) => setState(() => _range = r),
-              ),
+            child: DateRangeFilterBar(
+              value: _range,
+              onChanged: (r) => setState(() => _range = r),
             ),
           ),
           Padding(
@@ -464,11 +461,7 @@ class _SheetTransactionCard extends StatelessWidget {
     if (raw == null || raw.isEmpty) return '—';
     final dt = DateTime.tryParse(raw);
     if (dt == null) return raw;
-    const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
-    ];
-    return '${dt.day} ${months[dt.month - 1]} ${dt.year}';
+    return formatWithWeekday(dt);
   }
 
   @override

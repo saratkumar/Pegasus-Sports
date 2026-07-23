@@ -79,7 +79,7 @@ class _QrPaymentsTab extends StatefulWidget {
 
 class _QrPaymentsTabState extends State<_QrPaymentsTab> {
   bool _showResolved = false;
-  TimelineRange _range = TimelineRange.oneMonth;
+  DateTimeRange? _range;
   Future<List<Map<String, String>>>? _logFuture;
 
   @override
@@ -139,12 +139,9 @@ class _QrPaymentsTabState extends State<_QrPaymentsTab> {
             child: Row(
               children: [
                 Expanded(
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: TimelineRangeSelector(
-                      value: _range,
-                      onChanged: (r) => setState(() => _range = r),
-                    ),
+                  child: DateRangeFilterBar(
+                    value: _range,
+                    onChanged: (r) => setState(() => _range = r),
                   ),
                 ),
                 IconButton(
@@ -222,7 +219,7 @@ class _QrPaymentsTabState extends State<_QrPaymentsTab> {
             .where((r) =>
                 (r['eventType'] == 'QR Payment Approved' ||
                     r['eventType'] == 'QR Payment Rejected') &&
-                isWithinRange(r['timestamp'], _range))
+                isWithinRange(r['timestamp'], _range ?? defaultDateRange()))
             .toList()
           ..sort((a, b) => (b['timestamp'] ?? '').compareTo(a['timestamp'] ?? ''));
 
@@ -256,9 +253,7 @@ class _QrPaymentLogCard extends StatelessWidget {
     final approved = row['eventType'] == 'QR Payment Approved';
     final color = approved ? const Color(0xFF00D4AA) : AppColors.error;
     final ts = DateTime.tryParse(row['timestamp'] ?? '')?.toLocal();
-    final dateLabel = ts == null
-        ? ''
-        : '${ts.day.toString().padLeft(2, '0')}/${ts.month.toString().padLeft(2, '0')}/${ts.year}';
+    final dateLabel = ts == null ? '' : formatWithWeekday(ts);
 
     return Container(
       padding: const EdgeInsets.all(16),

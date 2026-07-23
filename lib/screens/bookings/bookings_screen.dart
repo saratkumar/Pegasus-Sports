@@ -634,7 +634,7 @@ class _HistoryTab extends StatefulWidget {
 }
 
 class _HistoryTabState extends State<_HistoryTab> {
-  TimelineRange _range = TimelineRange.oneMonth;
+  DateTimeRange? _range;
   late Future<List<Map<String, String>>> _rowsFuture;
 
   @override
@@ -669,8 +669,7 @@ class _HistoryTabState extends State<_HistoryTab> {
   String _fmt(String? iso) {
     final dt = DateTime.tryParse(iso ?? '')?.toLocal();
     if (dt == null) return '';
-    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    return '${dt.day} ${months[dt.month - 1]} ${dt.year}';
+    return formatWithWeekday(dt);
   }
 
   @override
@@ -682,12 +681,9 @@ class _HistoryTabState extends State<_HistoryTab> {
           child: Row(
             children: [
               Expanded(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: TimelineRangeSelector(
-                    value: _range,
-                    onChanged: (r) => setState(() => _range = r),
-                  ),
+                child: DateRangeFilterBar(
+                  value: _range,
+                  onChanged: (r) => setState(() => _range = r),
                 ),
               ),
               IconButton(
@@ -709,7 +705,8 @@ class _HistoryTabState extends State<_HistoryTab> {
                     child: CircularProgressIndicator(color: AppColors.primary));
               }
               final rows = (snap.data ?? [])
-                  .where((r) => isWithinRange(r['timestamp'], _range))
+                  .where((r) =>
+                      isWithinRange(r['timestamp'], _range ?? defaultDateRange()))
                   .toList()
                 ..sort((a, b) =>
                     (b['timestamp'] ?? '').compareTo(a['timestamp'] ?? ''));

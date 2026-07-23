@@ -4,6 +4,7 @@ import '../../services/backup_service.dart';
 import '../../utils/app_colors.dart';
 import 'appointment_management_screen.dart';
 import 'backup_screen.dart';
+import 'cancel_classes_screen.dart';
 import 'cash_payment_screen.dart';
 import 'class_management_screen.dart';
 import 'class_roster_screen.dart';
@@ -85,6 +86,15 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
             title: 'Classes',
             subtitle: 'Create, edit and delete fitness classes',
             page: const ClassManagementScreen(),
+          ),
+          const SizedBox(height: 10),
+          _tile(
+            context,
+            icon: Icons.event_busy_outlined,
+            color: AppColors.error,
+            title: 'Cancel Classes',
+            subtitle: 'Cancel a single session or an entire class series',
+            page: const CancelClassesScreen(),
           ),
           const SizedBox(height: 10),
           _tile(
