@@ -126,6 +126,14 @@
           }
         },
         {
+          "client_id": "100021036305-rk7fs4frelqklqp4kcmr4hp46qvfe4bt.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.psas.booking",
+            "certificate_hash": "72faec193dd9023b8c3e3336fb449d59647ae8c3"
+          }
+        },
+        {
           "client_id": "100021036305-sqmnm8ik4ce8pu45akln36t2m52762re.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
