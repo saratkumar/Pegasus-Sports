@@ -184,10 +184,11 @@ class _CashPaymentScreenState extends State<CashPaymentScreen> {
         'createdAt': FieldValue.serverTimestamp(),
       });
 
-      // Best-effort background attempt: write to the Google Sheet and email
-      // the invoice if EmailJS happens to be configured. Silent either way —
-      // the PDF below is the actual invoice delivery method for now.
-      InvoiceService.processWithInvoice(
+      // Record to the Google Sheet and email the invoice — awaited so the
+      // outcome is known before deciding whether the Firestore transaction
+      // doc is still needed (see below).
+      final (sheetRecorded, emailSent, invoiceError) =
+          await InvoiceService.processWithInvoice(
         invoiceNumber: invoiceNumber,
         paymentIntentId: internalRef,
         clientName: client.name,
@@ -197,17 +198,26 @@ class _CashPaymentScreenState extends State<CashPaymentScreen> {
         amount: amount,
         currency: 'SGD',
         displayPaymentRef: clientRef,
-      ).then((result) {
-        final (emailSent, error) = result;
-        return txRef.update({
+      );
+      if (sheetRecorded && emailSent) {
+        // Durably recorded in the Sheet and the customer has their invoice —
+        // nothing left for Firestore to hold onto.
+        await txRef.delete();
+      } else {
+        await txRef.update({
           'invoiceEmailSent': emailSent,
-          if (error != null) 'invoiceEmailError': error,
+          'sheetRecorded': sheetRecorded,
+          if (invoiceError != null) 'invoiceEmailError': invoiceError,
         });
-      }).catchError((_) {});
+      }
 
       if (mounted) {
-        AppToast.success(context,
-            '${plan.name} activated for ${client.name} (+$credits credits) — invoice emailed');
+        AppToast.success(
+          context,
+          emailSent
+              ? '${plan.name} activated for ${client.name} (+$credits credits) — invoice emailed'
+              : '${plan.name} activated for ${client.name} (+$credits credits) — invoice email failed, check Transaction History',
+        );
         setState(() {
           _selectedClient = null;
           _selectedPlan = null;

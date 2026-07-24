@@ -9,6 +9,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:crypto/crypto.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
+import '../../firebase_options.dart';
 import '../../services/user_service.dart';
 import '../../utils/app_colors.dart';
 
@@ -31,7 +32,12 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _signInWithGoogle() async {
     setState(() => _loading = true);
     try {
-      final googleUser = await GoogleSignIn().signIn();
+      final googleSignIn = GoogleSignIn(
+        clientId: !kIsWeb && (Platform.isIOS || Platform.isMacOS)
+            ? DefaultFirebaseOptions.ios.iosClientId
+            : null,
+      );
+      final googleUser = await googleSignIn.signIn();
       if (googleUser == null) {
         setState(() => _loading = false);
         return;

@@ -107,7 +107,9 @@ class _MembershipScreenState extends State<MembershipScreen> {
             PaymentService.setInvoiceDescription(paymentRef, invoiceNumber));
       }
 
-      // Write to Firestore transactions collection (primary source for admin UI)
+      // Write to Firestore transactions collection — a transient working
+      // record only; deleted below once the Sheet write + invoice email
+      // both succeed, since the Sheet becomes the durable copy.
       final txDoc = await FirebaseFirestore.instance.collection('transactions').add({
         'invoiceNumber': invoiceNumber,
         'paymentIntentId': paymentRef,
@@ -123,9 +125,11 @@ class _MembershipScreenState extends State<MembershipScreen> {
         'createdAt': FieldValue.serverTimestamp(),
       });
 
-      // Best-effort background attempt: mirror to the Google Sheet and
-      // email the PDF invoice.
-      InvoiceService.processWithInvoice(
+      // Mirror to the Google Sheet and email the PDF invoice — awaited so
+      // the outcome is known before deciding whether the Firestore
+      // transaction doc is still needed (see below).
+      final (sheetRecorded, emailSent, invoiceError) =
+          await InvoiceService.processWithInvoice(
         invoiceNumber: invoiceNumber,
         paymentIntentId: paymentRef,
         clientName: currentUser?.displayName ?? 'Member',
@@ -137,17 +141,26 @@ class _MembershipScreenState extends State<MembershipScreen> {
         displayPaymentRef: paymentRef,
         couponCode: coupon?.code,
         originalAmount: coupon != null ? plan.price : null,
-      ).then((result) {
-        final (emailSent, error) = result;
-        return txDoc.update({
+      );
+      if (sheetRecorded && emailSent) {
+        // Durably recorded in the Sheet and the customer has their invoice —
+        // nothing left for Firestore to hold onto.
+        await txDoc.delete();
+      } else {
+        await txDoc.update({
           'invoiceEmailSent': emailSent,
-          if (error != null) 'invoiceEmailError': error,
+          'sheetRecorded': sheetRecorded,
+          if (invoiceError != null) 'invoiceEmailError': invoiceError,
         });
-      }).catchError((_) {});
+      }
 
       if (context.mounted) {
-        AppToast.success(context,
-            '${plan.name} activated! +${plan.credits} credits added — invoice emailed to you');
+        AppToast.success(
+          context,
+          emailSent
+              ? '${plan.name} activated! +${plan.credits} credits added — invoice emailed to you'
+              : '${plan.name} activated! +${plan.credits} credits added — invoice email failed, our team has been notified',
+        );
       }
     } on StripeException catch (e) {
       if (e.error.code != FailureCode.Canceled && context.mounted) {

@@ -124,7 +124,7 @@ class WaitingListService {
     // Don't admit if within 6 hours of session start
     if (DateTime.now()
         .isAfter(sessionStart.subtract(const Duration(hours: 6)))) {
-      await _expireWaitingList(classId, bookingDate);
+      await expireWaitingListForDate(classId, bookingDate);
       return;
     }
 
@@ -199,36 +199,66 @@ class WaitingListService {
   }
 
   /// Expires all still-waiting entries for a session and refunds credits.
-  static Future<void> _expireWaitingList(
+  /// Returns the number of entries expired.
+  static Future<int> expireWaitingListForDate(
       String classId, DateTime bookingDate) async {
     final snap = await _col
         .where('classId', isEqualTo: classId)
         .where('status', isEqualTo: 'waiting')
         .get();
 
-    final batch = FirebaseFirestore.instance.batch();
-    for (final doc in snap.docs) {
+    final matching = snap.docs.where((doc) {
       final d = (doc['bookingDate'] as Timestamp).toDate();
-      if (d.year == bookingDate.year &&
+      return d.year == bookingDate.year &&
           d.month == bookingDate.month &&
-          d.day == bookingDate.day) {
-        batch.update(doc.reference, {'status': 'expired'});
-        // Refund credit asynchronously
-        UserService.addCredits(doc['userId'] as String, 1);
-        final entry = WaitingListModel.fromFirestore(doc);
-        unawaited(ConfigService.logActivityEvent(
-          eventType: 'Waitlist Expired',
-          classId: entry.classId,
-          className: entry.className,
-          sessionDate: entry.bookingDate,
-          sessionTime: entry.bookingTime,
-          userId: entry.userId,
-          userName: entry.userName,
-          bookedByRole: 'client',
-        ));
-      }
+          d.day == bookingDate.day;
+    }).toList();
+    await _expireEntries(matching);
+    return matching.length;
+  }
+
+  /// Expires every still-waiting entry for [classId] from [from] onward
+  /// (inclusive) — used when cancelling an entire class series, where every
+  /// future date's waiting list needs clearing, not just one day's. Returns
+  /// the number of entries expired.
+  static Future<int> expireFutureWaitingList(
+      String classId, DateTime from) async {
+    final snap = await _col
+        .where('classId', isEqualTo: classId)
+        .where('status', isEqualTo: 'waiting')
+        .get();
+
+    final start = DateTime(from.year, from.month, from.day);
+    final matching = snap.docs.where((doc) {
+      final d = (doc['bookingDate'] as Timestamp).toDate();
+      return !d.isBefore(start);
+    }).toList();
+    await _expireEntries(matching);
+    return matching.length;
+  }
+
+  static Future<void> _expireEntries(List<QueryDocumentSnapshot> docs) async {
+    if (docs.isEmpty) return;
+    final batch = FirebaseFirestore.instance.batch();
+    for (final doc in docs) {
+      batch.update(doc.reference, {'status': 'expired'});
     }
     await batch.commit();
+    for (final doc in docs) {
+      // Refund credit asynchronously
+      unawaited(UserService.addCredits(doc['userId'] as String, 1));
+      final entry = WaitingListModel.fromFirestore(doc);
+      unawaited(ConfigService.logActivityEvent(
+        eventType: 'Waitlist Expired',
+        classId: entry.classId,
+        className: entry.className,
+        sessionDate: entry.bookingDate,
+        sessionTime: entry.bookingTime,
+        userId: entry.userId,
+        userName: entry.userName,
+        bookedByRole: 'client',
+      ));
+    }
   }
 
   static String _dayName(int weekday) {

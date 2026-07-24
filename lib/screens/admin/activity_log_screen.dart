@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import '../../services/config_service.dart';
 import '../../utils/app_colors.dart';
+import '../../widgets/timeline_range_selector.dart';
 
 /// Full, unfiltered feed of every event mirrored to the ActivityLog Google
-/// Sheet for a given day — bookings, cancellations, waiting-list activity,
-/// trainer requests and their resolutions, and admin credit adjustments.
-/// Admin-only. Read from the Sheet mirror, not Firestore — see
+/// Sheet within a date range — bookings, cancellations, waiting-list
+/// activity, trainer requests and their resolutions, and admin credit
+/// adjustments. Admin-only. Read from the Sheet mirror, not Firestore — see
 /// ConfigService.logActivityEvent/getActivityLog.
 class ActivityLogScreen extends StatefulWidget {
   const ActivityLogScreen({super.key});
@@ -15,19 +16,10 @@ class ActivityLogScreen extends StatefulWidget {
 }
 
 class _ActivityLogScreenState extends State<ActivityLogScreen> {
-  DateTime _date = DateTime(
-      DateTime.now().year, DateTime.now().month, DateTime.now().day);
+  DateTimeRange? _range;
   bool _loading = false;
   bool _loaded = false;
   List<Map<String, String>> _rows = [];
-
-  static const _months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-  ];
-
-  String get _dateLabel =>
-      '${_date.day.toString().padLeft(2, '0')} ${_months[_date.month - 1]} ${_date.year}';
 
   Future<void> _load() async {
     setState(() {
@@ -40,14 +32,8 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
     // server-side `date` filter matches on sessionDate, so that doesn't fit
     // here; fetch unfiltered and filter client-side on timestamp instead.
     final all = await ConfigService.getActivityLog();
-    final rows = all.where((r) {
-      final ts = DateTime.tryParse(r['timestamp'] ?? '');
-      if (ts == null) return false;
-      final local = ts.toLocal();
-      return local.year == _date.year &&
-          local.month == _date.month &&
-          local.day == _date.day;
-    }).toList();
+    final range = _range ?? defaultDateRange();
+    final rows = all.where((r) => isWithinRange(r['timestamp'], range)).toList();
     rows.sort((a, b) => (b['timestamp'] ?? '').compareTo(a['timestamp'] ?? ''));
     if (!mounted) return;
     setState(() {
@@ -55,30 +41,6 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
       _loading = false;
       _loaded = true;
     });
-  }
-
-  void _prevDay() {
-    setState(() {
-      _date = _date.subtract(const Duration(days: 1));
-      _loaded = false;
-      _rows = [];
-    });
-  }
-
-  void _nextDay() {
-    setState(() {
-      _date = _date.add(const Duration(days: 1));
-      _loaded = false;
-      _rows = [];
-    });
-  }
-
-  String _fmtTime(String? iso) {
-    if (iso == null || iso.isEmpty) return '';
-    final dt = DateTime.tryParse(iso);
-    if (dt == null) return '';
-    final local = dt.toLocal();
-    return '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
   }
 
   ({IconData icon, Color color}) _styleFor(String eventType) {
@@ -98,6 +60,16 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
     return (icon: Icons.circle_outlined, color: AppColors.textMuted);
   }
 
+  String _fmtTimestamp(String? iso) {
+    if (iso == null || iso.isEmpty) return '';
+    final dt = DateTime.tryParse(iso);
+    if (dt == null) return '';
+    final local = dt.toLocal();
+    final time =
+        '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+    return '${formatWithWeekday(local)} · $time';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -106,32 +78,18 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
         children: [
           Container(
             color: AppColors.bg,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            child: Row(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.chevron_left),
-                  onPressed: _prevDay,
-                ),
-                Expanded(
-                  child: Text(
-                    _dateLabel,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.textPrimary),
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.chevron_right),
-                  onPressed: _nextDay,
-                ),
-              ],
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: DateRangeFilterBar(
+              value: _range,
+              onChanged: (r) => setState(() {
+                _range = r;
+                _loaded = false;
+                _rows = [];
+              }),
             ),
           ),
           Container(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
             child: ElevatedButton.icon(
               onPressed: _loading ? null : _load,
               icon: _loading
@@ -142,7 +100,7 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
                           strokeWidth: 2, color: Colors.white),
                     )
                   : const Icon(Icons.refresh, size: 18),
-              label: Text(_loading ? 'Loading…' : 'Load $_dateLabel'),
+              label: Text(_loading ? 'Loading…' : 'Load'),
               style: ElevatedButton.styleFrom(
                   minimumSize: const Size(double.infinity, 44)),
             ),
@@ -151,8 +109,8 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: const Text(
               'Every booking, cancellation, waitlist event, trainer request, '
-              'and credit adjustment for this day — read from the Google '
-              'Sheet mirror, not Firestore.',
+              'and credit adjustment in this window — read from the Google '
+              'Sheet mirror, not Firestore. Capped at 3 months.',
               style: TextStyle(fontSize: 11, color: AppColors.textMuted),
             ),
           ),
@@ -161,14 +119,14 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
           if (!_loaded)
             const Expanded(
               child: Center(
-                child: Text('Select a day and tap Load',
+                child: Text('Select a range and tap Load',
                     style: TextStyle(color: AppColors.textSecondary)),
               ),
             )
           else if (_rows.isEmpty)
             const Expanded(
               child: Center(
-                child: Text('No activity for this day',
+                child: Text('No activity in this window',
                     style: TextStyle(color: AppColors.textSecondary)),
               ),
             )
@@ -210,10 +168,6 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
                                             fontSize: 13,
                                             color: style.color)),
                                   ),
-                                  Text(_fmtTime(row['timestamp']),
-                                      style: const TextStyle(
-                                          fontSize: 11,
-                                          color: AppColors.textMuted)),
                                 ],
                               ),
                               const SizedBox(height: 3),
@@ -224,6 +178,10 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
                                 style: const TextStyle(
                                     fontSize: 13, color: AppColors.textPrimary),
                               ),
+                              const SizedBox(height: 2),
+                              Text(_fmtTimestamp(row['timestamp']),
+                                  style: const TextStyle(
+                                      fontSize: 11, color: AppColors.textMuted)),
                               if (note.isNotEmpty) ...[
                                 const SizedBox(height: 2),
                                 Text(note,

@@ -21,12 +21,19 @@ class InvoiceService {
   }
 
   /// Records the transaction in the Google Sheet Transactions tab and emails
-  /// the invoice as a PDF attachment. The Sheet write is best-effort
-  /// (failures are swallowed since it's a secondary record), but returns
-  /// whether the invoice email itself succeeded — plus the raw error detail
-  /// on failure — so the caller can surface a diagnosable message instead of
-  /// a silent drop.
-  static Future<(bool sent, String? error)> processWithInvoice({
+  /// the invoice as a PDF attachment. Both outcomes are reported back —
+  /// [sheetRecorded] and [emailSent] — so the caller can decide whether it's
+  /// safe to delete the Firestore `transactions` doc (only once the Sheet is
+  /// the durable copy AND the customer actually got their invoice) instead
+  /// of losing the only record of a failed write. [error] carries the raw
+  /// email-send failure detail, if any.
+  ///
+  /// [recordToSheet]/[sendEmail] let a retry (see TransactionsScreen's
+  /// "Needs Attention" list) redo only whichever half failed last time —
+  /// pass `false` for the half that already succeeded, or a retry would
+  /// write a duplicate row to the Sheet / send a second email.
+  static Future<(bool sheetRecorded, bool emailSent, String? error)>
+      processWithInvoice({
     required String invoiceNumber,
     required String paymentIntentId,
     required String clientName,
@@ -42,25 +49,38 @@ class InvoiceService {
     String? displayPaymentRef,
     String? couponCode,
     double? originalAmount,
+    bool recordToSheet = true,
+    bool sendEmail = true,
   }) async {
     final now = DateTime.now();
     final dateStr =
         '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-    var emailSent = false;
+    var sheetRecorded = !recordToSheet;
+    var emailSent = !sendEmail;
     String? error;
-    await Future.wait([
-      _recordToSheet(
-        invoiceNumber: invoiceNumber,
-        paymentIntentId: paymentIntentId,
-        clientName: clientName,
-        clientEmail: clientEmail,
-        planName: planName,
-        credits: credits,
-        amount: amount,
-        currency: currency,
-        date: dateStr,
-      ).catchError((_) {}),
-      () async {
+    final tasks = <Future>[];
+    if (recordToSheet) {
+      tasks.add(() async {
+        try {
+          await _recordToSheet(
+            invoiceNumber: invoiceNumber,
+            paymentIntentId: paymentIntentId,
+            clientName: clientName,
+            clientEmail: clientEmail,
+            planName: planName,
+            credits: credits,
+            amount: amount,
+            currency: currency,
+            date: dateStr,
+          );
+          sheetRecorded = true;
+        } catch (_) {
+          // Reported via the returned flag — no rethrow.
+        }
+      }());
+    }
+    if (sendEmail) {
+      tasks.add(() async {
         try {
           await _sendEmail(
             invoiceNumber: invoiceNumber,
@@ -79,9 +99,10 @@ class InvoiceService {
         } catch (e) {
           error = e.toString();
         }
-      }(),
-    ]);
-    return (emailSent, error);
+      }());
+    }
+    await Future.wait(tasks);
+    return (sheetRecorded, emailSent, error);
   }
 
   static Future<void> _recordToSheet({

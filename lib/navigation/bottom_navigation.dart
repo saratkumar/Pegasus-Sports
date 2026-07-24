@@ -1,6 +1,9 @@
+import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import '../firebase_options.dart';
 import '../models/user_model.dart';
 import '../screens/timetable/timetable_screen.dart';
 import '../screens/bookings/bookings_screen.dart';
@@ -59,7 +62,11 @@ class _BottomNavState extends State<BottomNav> {
           ElevatedButton(
             onPressed: () async {
               Navigator.pop(ctx);
-              await GoogleSignIn().signOut();
+              await GoogleSignIn(
+                clientId: !kIsWeb && (Platform.isIOS || Platform.isMacOS)
+                    ? DefaultFirebaseOptions.ios.iosClientId
+                    : null,
+              ).signOut();
               await FirebaseAuth.instance.signOut();
             },
             style: ElevatedButton.styleFrom(

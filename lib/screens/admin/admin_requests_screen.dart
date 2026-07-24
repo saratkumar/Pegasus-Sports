@@ -14,6 +14,7 @@ import '../../services/request_notification_service.dart';
 import '../../services/waiting_list_service.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
+import '../../widgets/timeline_range_selector.dart';
 
 class AdminRequestsScreen extends StatefulWidget {
   const AdminRequestsScreen({super.key});
@@ -78,13 +79,25 @@ class _QrPaymentsTab extends StatefulWidget {
 
 class _QrPaymentsTabState extends State<_QrPaymentsTab> {
   bool _showResolved = false;
+  DateTimeRange? _range;
+  Future<List<Map<String, String>>>? _logFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _logFuture = ConfigService.getActivityLog();
+  }
+
+  void _reloadLog() {
+    setState(() => _logFuture = ConfigService.getActivityLog());
+  }
 
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.fromLTRB(14, 14, 14, 0),
           child: Row(
             children: [
               ChoiceChip(
@@ -115,35 +128,185 @@ class _QrPaymentsTabState extends State<_QrPaymentsTab> {
             ],
           ),
         ),
-        Expanded(
-          child: StreamBuilder<List<QrPaymentRequestModel>>(
-            stream: _showResolved
-                ? QrPaymentService.streamResolved()
-                : QrPaymentService.streamPending(),
-            builder: (context, snap) {
-              if (snap.connectionState == ConnectionState.waiting &&
-                  !snap.hasData) {
-                return const Center(
-                    child: CircularProgressIndicator(color: AppColors.primary));
-              }
-              final reqs = snap.data ?? [];
-              if (reqs.isEmpty) {
-                return Center(
-                  child: Text(
-                      _showResolved ? 'No resolved QR payments' : 'No pending QR payments',
-                      style: const TextStyle(color: AppColors.textSecondary)),
-                );
-              }
-              return ListView.separated(
-                padding: const EdgeInsets.all(14),
-                itemCount: reqs.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 10),
-                itemBuilder: (context, i) => _QrPaymentCard(req: reqs[i]),
-              );
-            },
+        // Resolved QR requests are deleted from Firestore right after being
+        // archived to the Activity Log Sheet (see QrPaymentService.approve/
+        // reject), so "Resolved" is sourced from the Sheet, bounded to this
+        // timeline window — any doc still in Firestore here only means the
+        // Sheet archive itself failed (fallback, not the normal case).
+        if (_showResolved)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: DateRangeFilterBar(
+                    value: _range,
+                    onChanged: (r) => setState(() => _range = r),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.refresh,
+                      size: 18, color: AppColors.textMuted),
+                  tooltip: 'Reload activity log',
+                  onPressed: _reloadLog,
+                ),
+              ],
+            ),
           ),
+        Expanded(
+          child: _showResolved ? _buildResolved() : _buildPending(),
         ),
       ],
+    );
+  }
+
+  Widget _buildPending() {
+    return StreamBuilder<List<QrPaymentRequestModel>>(
+      stream: QrPaymentService.streamPending(),
+      builder: (context, snap) {
+        if (snap.connectionState == ConnectionState.waiting &&
+            !snap.hasData) {
+          return const Center(
+              child: CircularProgressIndicator(color: AppColors.primary));
+        }
+        final reqs = snap.data ?? [];
+        if (reqs.isEmpty) {
+          return const Center(
+            child: Text('No pending QR payments',
+                style: TextStyle(color: AppColors.textSecondary)),
+          );
+        }
+        return ListView.separated(
+          padding: const EdgeInsets.all(14),
+          itemCount: reqs.length,
+          separatorBuilder: (_, __) => const SizedBox(height: 10),
+          itemBuilder: (context, i) => _QrPaymentCard(req: reqs[i]),
+        );
+      },
+    );
+  }
+
+  // Resolved QR payments are read from the Activity Log Sheet only — once
+  // archived there, the Firestore qrPaymentRequests doc is deleted (see
+  // QrPaymentService.approve/reject), so the Sheet is treated as the sole
+  // source of truth for this tab rather than merging in a Firestore
+  // fallback.
+  Widget _buildResolved() {
+    return FutureBuilder<List<Map<String, String>>>(
+      future: _logFuture,
+      builder: (context, logSnap) {
+        final loading = logSnap.connectionState == ConnectionState.waiting &&
+            !logSnap.hasData;
+        if (loading) {
+          return const Center(
+              child: CircularProgressIndicator(color: AppColors.primary));
+        }
+        if (logSnap.hasError) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Text('Could not load the Activity Log',
+                    style: TextStyle(color: AppColors.textSecondary)),
+                const SizedBox(height: 8),
+                TextButton(onPressed: _reloadLog, child: const Text('Retry')),
+              ],
+            ),
+          );
+        }
+
+        final logRows = (logSnap.data ?? [])
+            .where((r) =>
+                (r['eventType'] == 'QR Payment Approved' ||
+                    r['eventType'] == 'QR Payment Rejected') &&
+                isWithinRange(r['timestamp'], _range ?? defaultDateRange()))
+            .toList()
+          ..sort((a, b) => (b['timestamp'] ?? '').compareTo(a['timestamp'] ?? ''));
+
+        if (logRows.isEmpty) {
+          return const Center(
+            child: Text('No resolved QR payments in this window',
+                style: TextStyle(color: AppColors.textSecondary)),
+          );
+        }
+
+        return ListView.separated(
+          padding: const EdgeInsets.all(14),
+          itemCount: logRows.length,
+          separatorBuilder: (_, __) => const SizedBox(height: 10),
+          itemBuilder: (context, i) => _QrPaymentLogCard(row: logRows[i]),
+        );
+      },
+    );
+  }
+}
+
+/// Read-only card for a resolved QR payment sourced from the Activity Log
+/// Sheet (as opposed to [_QrPaymentCard], which is Firestore-backed and
+/// only has data for the pending/un-archived-fallback cases).
+class _QrPaymentLogCard extends StatelessWidget {
+  final Map<String, String> row;
+  const _QrPaymentLogCard({required this.row});
+
+  @override
+  Widget build(BuildContext context) {
+    final approved = row['eventType'] == 'QR Payment Approved';
+    final color = approved ? const Color(0xFF00D4AA) : AppColors.error;
+    final ts = DateTime.tryParse(row['timestamp'] ?? '')?.toLocal();
+    final dateLabel = ts == null ? '' : formatWithWeekday(ts);
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.divider),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(row['className'] ?? '',
+                    style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary)),
+              ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text((approved ? 'APPROVED' : 'REJECTED'),
+                    style: TextStyle(
+                        fontSize: 10,
+                        color: color,
+                        fontWeight: FontWeight.w700)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text('Client: ${row['userName'] ?? ''}',
+              style: const TextStyle(
+                  fontSize: 12, color: AppColors.textSecondary)),
+          if ((row['note'] ?? '').isNotEmpty) ...[
+            const SizedBox(height: 3),
+            Text(row['note']!,
+                style: const TextStyle(
+                    fontSize: 12, color: AppColors.textSecondary)),
+          ],
+          if (dateLabel.isNotEmpty) ...[
+            const SizedBox(height: 3),
+            Text(dateLabel,
+                style:
+                    const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+          ],
+        ],
+      ),
     );
   }
 }

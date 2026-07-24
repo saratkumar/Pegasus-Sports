@@ -53,4 +53,42 @@ class EmailService {
       },
     });
   }
+
+  /// Sent when an admin cancels a single session or an entire class series
+  /// (see ClassCancellationService) — the credit refund already happened by
+  /// the time this queues, so the copy states it as fact, not a promise.
+  static Future<void> sendCancellationEmail({
+    required String email,
+    required String clientName,
+    required String className,
+    required DateTime classDate,
+    required String classTime,
+    required int creditsRefunded,
+    bool wholeClassCancelled = false,
+  }) async {
+    final dateStr =
+        '${classDate.day.toString().padLeft(2, '0')}/${classDate.month.toString().padLeft(2, '0')}/${classDate.year}';
+    final subject = wholeClassCancelled
+        ? 'Class Cancelled — $className'
+        : 'Session Cancelled — $className ($dateStr)';
+    final body = wholeClassCancelled
+        ? '<strong>$className</strong> has been cancelled and will no longer run.'
+        : 'Your <strong>$className</strong> session on <strong>$dateStr</strong> at <strong>$classTime</strong> has been cancelled.';
+
+    await FirebaseFirestore.instance.collection('mail').add({
+      'to': [email],
+      'message': {
+        'subject': subject,
+        'html': '''
+          <div style="font-family: sans-serif; color: #0A0A0A;">
+            <h2 style="color: #FF7A00;">Session Cancelled</h2>
+            <p>Hi $clientName,</p>
+            <p>$body</p>
+            ${creditsRefunded > 0 ? '<p>$creditsRefunded credit${creditsRefunded != 1 ? 's have' : ' has'} been refunded to your account.</p>' : ''}
+            <p>We apologise for the inconvenience.</p>
+          </div>
+        ''',
+      },
+    });
+  }
 }

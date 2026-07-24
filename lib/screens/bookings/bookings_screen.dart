@@ -9,6 +9,7 @@ import '../../services/waiting_list_service.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
 import '../../utils/time_utils.dart';
+import '../../widgets/timeline_range_selector.dart';
 
 class BookingsScreen extends StatefulWidget {
   const BookingsScreen({super.key});
@@ -24,7 +25,7 @@ class _BookingsScreenState extends State<BookingsScreen>
   @override
   void initState() {
     super.initState();
-    _tab = TabController(length: 2, vsync: this);
+    _tab = TabController(length: 3, vsync: this);
   }
 
   @override
@@ -46,6 +47,7 @@ class _BookingsScreenState extends State<BookingsScreen>
           tabs: const [
             Tab(text: 'Bookings'),
             Tab(text: 'Waiting List'),
+            Tab(text: 'History'),
           ],
         ),
       ),
@@ -54,6 +56,7 @@ class _BookingsScreenState extends State<BookingsScreen>
         children: [
           _BookingsTab(),
           _WaitingListTab(),
+          const _HistoryTab(),
         ],
       ),
     );
@@ -611,6 +614,200 @@ class _WaitingCard extends StatelessWidget {
         Text(label,
             style: const TextStyle(
                 fontSize: 12, color: AppColors.textSecondary)),
+      ],
+    );
+  }
+}
+
+// ── History tab (from the Activity Log Sheet) ──────────────────────────────
+
+/// The `bookings` collection is a live/working set only — old bookings are
+/// periodically purged (see CleanupService) — so it can't be relied on for
+/// history. This tab reads the durable Activity Log Sheet mirror instead,
+/// scoped to the signed-in client's own events (server-side enforced in
+/// functions/index.js's callAppsScript), bounded to a 1/2/3-month window.
+class _HistoryTab extends StatefulWidget {
+  const _HistoryTab();
+
+  @override
+  State<_HistoryTab> createState() => _HistoryTabState();
+}
+
+class _HistoryTabState extends State<_HistoryTab> {
+  DateTimeRange? _range;
+  late Future<List<Map<String, String>>> _rowsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _rowsFuture = _load();
+  }
+
+  Future<List<Map<String, String>>> _load() {
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    return ConfigService.getActivityLog(userId: uid);
+  }
+
+  void _reload() {
+    setState(() => _rowsFuture = _load());
+  }
+
+  ({IconData icon, Color color}) _styleFor(String eventType) {
+    final e = eventType.toLowerCase();
+    if (e.contains('cancelled') || e.contains('rejected')) {
+      return (icon: Icons.cancel_outlined, color: AppColors.error);
+    }
+    if (e.contains('waitlist') || e.contains('requested') || e.contains('submitted')) {
+      return (icon: Icons.hourglass_top, color: const Color(0xFFFFAB40));
+    }
+    if (e.contains('approved') || e.contains('admitted') || e.contains('booked')) {
+      return (icon: Icons.check_circle_outline, color: const Color(0xFF00D4AA));
+    }
+    return (icon: Icons.circle_outlined, color: AppColors.textMuted);
+  }
+
+  String _fmt(String? iso) {
+    final dt = DateTime.tryParse(iso ?? '')?.toLocal();
+    if (dt == null) return '';
+    return formatWithWeekday(dt);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+          child: Row(
+            children: [
+              Expanded(
+                child: DateRangeFilterBar(
+                  value: _range,
+                  onChanged: (r) => setState(() => _range = r),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.refresh,
+                    size: 18, color: AppColors.textMuted),
+                tooltip: 'Reload',
+                onPressed: _reload,
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: FutureBuilder<List<Map<String, String>>>(
+            future: _rowsFuture,
+            builder: (context, snap) {
+              if (snap.connectionState == ConnectionState.waiting &&
+                  !snap.hasData) {
+                return const Center(
+                    child: CircularProgressIndicator(color: AppColors.primary));
+              }
+              final rows = (snap.data ?? [])
+                  .where((r) =>
+                      isWithinRange(r['timestamp'], _range ?? defaultDateRange()))
+                  .toList()
+                ..sort((a, b) =>
+                    (b['timestamp'] ?? '').compareTo(a['timestamp'] ?? ''));
+
+              if (rows.isEmpty) {
+                return Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          color: AppColors.card,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: AppColors.divider),
+                        ),
+                        child: const Icon(Icons.history,
+                            size: 48, color: AppColors.textMuted),
+                      ),
+                      const SizedBox(height: 20),
+                      const Text("No history in this window",
+                          style: TextStyle(
+                              fontSize: 18,
+                              color: AppColors.textPrimary,
+                              fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 8),
+                      const Text("Try a longer timeline above",
+                          style: TextStyle(
+                              fontSize: 13, color: AppColors.textSecondary)),
+                    ],
+                  ),
+                );
+              }
+
+              return ListView.separated(
+                padding: const EdgeInsets.all(16),
+                itemCount: rows.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                itemBuilder: (context, i) {
+                  final row = rows[i];
+                  final eventType = row['eventType'] ?? '';
+                  final style = _styleFor(eventType);
+                  final className = row['className'] ?? '';
+                  final note = row['note'] ?? '';
+                  return Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.card,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppColors.divider),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(style.icon, size: 18, color: style.color),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(eventType,
+                                        style: TextStyle(
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 13,
+                                            color: style.color)),
+                                  ),
+                                  Text(_fmt(row['timestamp']),
+                                      style: const TextStyle(
+                                          fontSize: 11,
+                                          color: AppColors.textMuted)),
+                                ],
+                              ),
+                              if (className.isNotEmpty) ...[
+                                const SizedBox(height: 3),
+                                Text(className,
+                                    style: const TextStyle(
+                                        fontSize: 13,
+                                        color: AppColors.textPrimary)),
+                              ],
+                              if (note.isNotEmpty) ...[
+                                const SizedBox(height: 2),
+                                Text(note,
+                                    style: const TextStyle(
+                                        fontSize: 11,
+                                        color: AppColors.textSecondary,
+                                        fontStyle: FontStyle.italic)),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
       ],
     );
   }

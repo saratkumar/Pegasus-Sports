@@ -1,0 +1,25 @@
+workflows:
+  ios-test-unsigned:
+    name: iOS Test Build (Unsigned)
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Get Flutter packages
+        script: flutter pub get
+      - name: Install pods
+        script: |
+          cd ios && pod install
+      - name: Build unsigned iOS app
+        script: |
+          flutter build ios --release --no-codesign
+      - name: Package as .ipa
+        script: |
+          mkdir -p Payload
+          cp -r build/ios/iphoneos/Runner.app Payload/
+          zip -r psas-unsigned.ipa Payload
+    artifacts:
+      - psas-unsigned.ipa

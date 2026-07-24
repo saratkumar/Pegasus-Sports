@@ -144,13 +144,22 @@ service cloud.firestore {
     // the caller so no one can create a record attributed to someone else.
     match /transactions/{docId} {
       allow read: if isSignedIn() && (resource.data.clientUid == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() && request.resource.data.clientUid == request.auth.uid;
+      // isAdmin() bypass needed here (not just on update/delete): admin
+      // approval flows (qr_payment_service.dart, cash_payment_screen.dart)
+      // create this doc on behalf of the CLIENT being approved, so
+      // clientUid != request.auth.uid in that case.
+      allow create: if isSignedIn() &&
+        (request.resource.data.clientUid == request.auth.uid || isAdmin());
       allow update: if isAdmin() || (
         isSignedIn() &&
         resource.data.clientUid == request.auth.uid &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['invoiceEmailSent', 'invoiceEmailError'])
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['invoiceEmailSent', 'invoiceEmailError', 'sheetRecorded'])
       );
-      allow delete: if isAdmin();
+      // Self-service card/Stripe purchases (memberships_screen.dart) delete
+      // their own now-durably-Sheet-recorded doc the same way admin-driven
+      // QR/cash approvals do — see InvoiceService.processWithInvoice callers.
+      allow delete: if isAdmin() ||
+        (isSignedIn() && resource.data.clientUid == request.auth.uid);
     }
     match /payments/{docId} {
       allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());

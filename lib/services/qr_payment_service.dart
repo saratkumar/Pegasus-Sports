@@ -76,14 +76,6 @@ class QrPaymentService {
           ..sort((a, b) => a.createdAt.compareTo(b.createdAt)));
   }
 
-  static Stream<List<QrPaymentRequestModel>> streamResolved() {
-    return _requestsCol
-        .where('status', whereIn: ['approved', 'rejected'])
-        .snapshots()
-        .map((s) => s.docs.map(QrPaymentRequestModel.fromFirestore).toList()
-          ..sort((a, b) => b.createdAt.compareTo(a.createdAt)));
-  }
-
   static Stream<List<QrPaymentRequestModel>> streamMyRequests(String uid) {
     return _requestsCol
         .where('userId', isEqualTo: uid)
@@ -135,7 +127,8 @@ class QrPaymentService {
       'createdAt': FieldValue.serverTimestamp(),
     });
 
-    InvoiceService.processWithInvoice(
+    final (sheetRecorded, emailSent, invoiceError) =
+        await InvoiceService.processWithInvoice(
       invoiceNumber: invoiceNumber,
       paymentIntentId: internalRef,
       clientName: req.userName,
@@ -145,20 +138,25 @@ class QrPaymentService {
       amount: req.amount,
       currency: req.currency,
       displayPaymentRef: paymentRef,
-    ).then((result) {
-      final (emailSent, error) = result;
-      return txRef.update({
+    );
+    if (sheetRecorded && emailSent) {
+      // Durably recorded in the Sheet and the customer has their invoice —
+      // nothing left for Firestore to hold onto.
+      await txRef.delete();
+    } else {
+      await txRef.update({
         'invoiceEmailSent': emailSent,
-        if (error != null) 'invoiceEmailError': error,
+        'sheetRecorded': sheetRecorded,
+        if (invoiceError != null) 'invoiceEmailError': invoiceError,
       });
-    }).catchError((_) {});
+    }
 
     // Once resolved, this doc's job is done — archive it to the Sheet's
     // ActivityLog (same pattern as credit/slot-increase requests) and
     // remove it from Firestore rather than leaving it there forever. The
-    // transaction record itself already lives on permanently in the
-    // `transactions` collection and the Sheet's Transactions tab, so
-    // nothing about the payment history is lost.
+    // transaction record lives on in the Sheet's Transactions tab (and, if
+    // the Sheet write above failed, in the `transactions` collection as a
+    // fallback), so nothing about the payment history is lost.
     final archived = await ConfigService.logActivityEvent(
       eventType: 'QR Payment Approved',
       classId: '',
