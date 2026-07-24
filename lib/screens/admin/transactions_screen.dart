@@ -84,6 +84,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
         displayPaymentRef: data['clientPaymentRef']?.toString(),
         couponCode: data['couponCode']?.toString(),
         originalAmount: (data['originalAmount'] as num?)?.toDouble(),
+        validityDays: (data['validityDays'] as num?)?.toInt(),
         recordToSheet: !alreadySheetRecorded,
         sendEmail: !alreadyEmailSent,
       );
@@ -165,8 +166,21 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                           TextStyle(fontSize: 11, color: AppColors.textSecondary),
                     ),
                     const SizedBox(height: 10),
-                    ...docs.map((d) => _StuckTransactionCard(
-                        doc: d, onRetry: () => _retryInvoice(d))),
+                    // Bounded + independently scrollable so an arbitrary
+                    // number of stuck records can never push the filter bar,
+                    // search field, or transaction list off screen (was the
+                    // source of the "bottom overflowed by 171 pixels" error).
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 220),
+                      child: SingleChildScrollView(
+                        child: Column(
+                          children: docs
+                              .map((d) => _StuckTransactionCard(
+                                  doc: d, onRetry: () => _retryInvoice(d)))
+                              .toList(),
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               );
@@ -331,7 +345,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
 
 class _StuckTransactionCard extends StatefulWidget {
   final QueryDocumentSnapshot doc;
-  final VoidCallback onRetry;
+  final Future<void> Function() onRetry;
   const _StuckTransactionCard({required this.doc, required this.onRetry});
 
   @override
@@ -392,7 +406,7 @@ class _StuckTransactionCardState extends State<_StuckTransactionCard> {
               : TextButton(
                   onPressed: () async {
                     setState(() => _retrying = true);
-                    widget.onRetry();
+                    await widget.onRetry();
                     if (mounted) setState(() => _retrying = false);
                   },
                   child: const Text('Retry'),

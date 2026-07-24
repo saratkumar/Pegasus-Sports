@@ -124,6 +124,7 @@ class QrPaymentService {
       'credits': req.credits,
       'amount': req.amount,
       'currency': req.currency,
+      'validityDays': req.validityDays,
       'createdAt': FieldValue.serverTimestamp(),
     });
 
@@ -138,6 +139,7 @@ class QrPaymentService {
       amount: req.amount,
       currency: req.currency,
       displayPaymentRef: paymentRef,
+      validityDays: req.validityDays,
     );
     if (sheetRecorded && emailSent) {
       // Durably recorded in the Sheet and the customer has their invoice —

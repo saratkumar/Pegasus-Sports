@@ -79,9 +79,29 @@ class DateRangeFilterBar extends StatelessWidget {
       helpText: 'Select date range (max 3 months)',
       builder: (context, child) => Theme(
         data: Theme.of(context).copyWith(
-          colorScheme: Theme.of(context)
-              .colorScheme
-              .copyWith(primary: AppColors.primary),
+          colorScheme: Theme.of(context).colorScheme.copyWith(
+                primary: AppColors.primary,
+                onPrimary: Colors.white,
+              ),
+          datePickerTheme: DatePickerThemeData(
+            headerBackgroundColor: AppColors.primary,
+            headerForegroundColor: Colors.white,
+            todayForegroundColor:
+                const WidgetStatePropertyAll(AppColors.primary),
+            todayBorder: const BorderSide(color: AppColors.primary),
+            dayForegroundColor: WidgetStateProperty.resolveWith((states) {
+              if (states.contains(WidgetState.selected)) return Colors.white;
+              return AppColors.textPrimary;
+            }),
+            dayBackgroundColor: WidgetStateProperty.resolveWith((states) {
+              if (states.contains(WidgetState.selected)) return AppColors.primary;
+              return null;
+            }),
+            rangeSelectionBackgroundColor:
+                AppColors.primary.withValues(alpha: 0.15),
+            rangeSelectionOverlayColor:
+                WidgetStatePropertyAll(AppColors.primary.withValues(alpha: 0.1)),
+          ),
         ),
         child: child!,
       ),

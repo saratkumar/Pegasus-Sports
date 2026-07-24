@@ -88,7 +88,7 @@ class ConfigService {
   }
 
   /// Fetches all rows from the Transactions sheet.
-  /// Returns [{invoiceNumber, txId, clientName, clientEmail, planName, credits, amount, currency, date}, …]
+  /// Returns [{invoiceNumber, clientName, clientEmail, planName, credits, amount, currency, date}, …]
   static Future<List<Map<String, String>>> getTransactions() async {
     final result = await _call('get_transactions');
     var data = result['data'];
@@ -99,10 +99,33 @@ class ConfigService {
     if (data is! List) {
       throw Exception('Unexpected response shape from Apps Script');
     }
-    return data
-        .map<Map<String, String>>((e) =>
-            (e as Map).map((k, v) => MapEntry(k.toString(), v.toString())))
-        .toList();
+    return data.map<Map<String, String>>((e) {
+      final row = (e as Map)
+          .map((k, v) => MapEntry(k.toString(), v?.toString() ?? ''));
+      String pick(List<String> keys) {
+        for (final k in keys) {
+          final v = row[k];
+          if (v != null && v.isNotEmpty) return v;
+        }
+        return '';
+      }
+
+      return {
+        'invoiceNumber': pick(['invoiceNumber', 'Invoice No', 'Invoice Number']),
+        'clientName': pick(['clientName', 'Client Name']),
+        'clientEmail': pick(['clientEmail', 'Client Email']),
+        'planName': pick(['planName', 'Plan', 'Plan Name']),
+        'credits': pick(['credits', 'Credits']),
+        'amount': pick(['amount', 'Amount']),
+        'currency': pick(['currency', 'Currency']),
+        // The Sheet's "Date" column currently holds the internal
+        // payment/txn reference and the real date ended up under "Payment
+        // Ref" instead (columns got swapped when the row was written) — try
+        // the correct source first, only falling back to the mislabeled
+        // "Date" column if nothing else has a value.
+        'date': pick(['date', 'Payment Ref', 'Date']),
+      };
+    }).toList();
   }
 
   /// Records a transaction row to the Transactions sheet via the same Apps Script.

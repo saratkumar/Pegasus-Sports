@@ -120,6 +120,7 @@ class _MembershipScreenState extends State<MembershipScreen> {
         'credits': plan.credits,
         'amount': finalAmount,
         'currency': 'SGD',
+        'validityDays': plan.validityDays,
         if (coupon != null) 'couponCode': coupon.code,
         if (coupon != null) 'originalAmount': plan.price,
         'createdAt': FieldValue.serverTimestamp(),
@@ -141,6 +142,7 @@ class _MembershipScreenState extends State<MembershipScreen> {
         displayPaymentRef: paymentRef,
         couponCode: coupon?.code,
         originalAmount: coupon != null ? plan.price : null,
+        validityDays: plan.validityDays,
       );
       if (sheetRecorded && emailSent) {
         // Durably recorded in the Sheet and the customer has their invoice —

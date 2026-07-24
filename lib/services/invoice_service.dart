@@ -49,6 +49,7 @@ class InvoiceService {
     String? displayPaymentRef,
     String? couponCode,
     double? originalAmount,
+    int? validityDays,
     bool recordToSheet = true,
     bool sendEmail = true,
   }) async {
@@ -93,6 +94,7 @@ class InvoiceService {
             displayPaymentRef: displayPaymentRef,
             couponCode: couponCode,
             originalAmount: originalAmount,
+            validityDays: validityDays,
             date: dateStr,
           );
           emailSent = true;
@@ -145,6 +147,7 @@ class InvoiceService {
     String? displayPaymentRef,
     String? couponCode,
     double? originalAmount,
+    int? validityDays,
     required String date,
   }) async {
     final refLine = (displayPaymentRef != null && displayPaymentRef.isNotEmpty)
@@ -161,6 +164,7 @@ class InvoiceService {
       currency: currency,
       couponCode: couponCode,
       originalAmount: originalAmount,
+      validityDays: validityDays,
     );
     await FirebaseFirestore.instance.collection('mail').add({
       'to': [clientEmail],

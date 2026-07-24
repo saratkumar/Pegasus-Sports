@@ -181,6 +181,7 @@ class _CashPaymentScreenState extends State<CashPaymentScreen> {
         'credits': credits,
         'amount': amount,
         'currency': 'SGD',
+        'validityDays': plan.validityDays,
         'createdAt': FieldValue.serverTimestamp(),
       });
 
@@ -198,6 +199,7 @@ class _CashPaymentScreenState extends State<CashPaymentScreen> {
         amount: amount,
         currency: 'SGD',
         displayPaymentRef: clientRef,
+        validityDays: plan.validityDays,
       );
       if (sheetRecorded && emailSent) {
         // Durably recorded in the Sheet and the customer has their invoice —
