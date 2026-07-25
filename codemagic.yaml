@@ -36,17 +36,22 @@ workflows:
       flutter: stable
       xcode: latest
       cocoapods: default
-      ios_signing:
-        distribution_type: app_store
-        # Must match the bundle ID registered in Apple Developer Portal / App Store Connect.
-        bundle_identifier: com.psas.booking
+      vars:
+        BUNDLE_ID: "com.psas.booking"
     scripts:
       - name: Get Flutter packages
         script: flutter pub get
       - name: Install pods
         script: |
           cd ios && pod install
-      - name: Set up code signing
+      - name: Set up keychain
+        script: keychain initialize
+      - name: Fetch signing files
+        script: |
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --create
+      - name: Set up code signing settings on Xcode project
         script: xcode-project use-profiles
       - name: Build ipa
         script: flutter build ipa --release --export-options-plist=/Users/builder/export_options.plist
