@@ -23,3 +23,36 @@ workflows:
           zip -r psas-unsigned.ipa Payload
     artifacts:
       - psas-unsigned.ipa
+
+  ios-release:
+    name: iOS Release (TestFlight)
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    # Create an App Store Connect API key integration in Codemagic > Team settings > Integrations,
+    # then reference its name here. It replaces manual certificate/provisioning profile management.
+    integrations:
+      app_store_connect: codemagic_asc_api_key
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      ios_signing:
+        distribution_type: app_store
+        # Must match the bundle ID registered in Apple Developer Portal / App Store Connect.
+        bundle_identifier: com.psas.booking
+    scripts:
+      - name: Get Flutter packages
+        script: flutter pub get
+      - name: Install pods
+        script: |
+          cd ios && pod install
+      - name: Set up code signing
+        script: xcode-project use-profiles
+      - name: Build ipa
+        script: flutter build ipa --release --export-options-plist=/Users/builder/export_options.plist
+    artifacts:
+      - build/ios/ipa/*.ipa
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
