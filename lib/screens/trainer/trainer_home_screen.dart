@@ -353,18 +353,22 @@ class _TrainerHomeScreenState extends State<TrainerHomeScreen> {
     }
 
     final me = FirebaseAuth.instance.currentUser!;
-    final bookingRef = await FirebaseFirestore.instance.collection('bookings').add({
-      'userId': selected.uid,
-      'classId': cls.effectiveId,
-      'displayName': cls.mode,
-      'bookingType': 'class',
-      'bookingDay': _dayNames[_selectedDate.weekday - 1],
-      'bookingDate': Timestamp.fromDate(_selectedDate),
-      'bookingTime': cls.startTime,
-      'createdAt': Timestamp.now(),
-      'bookedBy': me.uid,
-      'bookedByRole': 'trainer',
-      'creditsUsed': 1,
+    final bookingRef = FirebaseFirestore.instance.collection('bookings').doc();
+    await UserService.deductCreditAndWrite(selected.uid, (tx, sourceEntryId) {
+      tx.set(bookingRef, {
+        'userId': selected.uid,
+        'classId': cls.effectiveId,
+        'displayName': cls.mode,
+        'bookingType': 'class',
+        'bookingDay': _dayNames[_selectedDate.weekday - 1],
+        'bookingDate': Timestamp.fromDate(_selectedDate),
+        'bookingTime': cls.startTime,
+        'createdAt': Timestamp.now(),
+        'bookedBy': me.uid,
+        'bookedByRole': 'trainer',
+        'creditsUsed': 1,
+        'creditSourceEntryId': sourceEntryId,
+      });
     });
     unawaited(ConfigService.logActivityEvent(
       eventType: 'Booked',
@@ -377,7 +381,6 @@ class _TrainerHomeScreenState extends State<TrainerHomeScreen> {
       bookedByRole: 'trainer',
       bookingId: bookingRef.id,
     ));
-    await UserService.deductCredit(selected.uid);
     if (mounted) AppToast.success(context, '${cls.mode} booked for ${selected.name}');
   }
 

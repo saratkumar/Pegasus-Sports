@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'services/deep_link_service.dart';
 import 'services/notifications.dart';
 import 'services/user_service.dart';
 import 'firebase_options.dart';
@@ -10,6 +11,7 @@ import 'utils/app_colors.dart';
 import 'models/user_model.dart';
 import 'navigation/bottom_navigation.dart';
 import 'screens/login/login_screen.dart';
+import 'screens/memberships/memberships_screen.dart';
 
 // TODO(debug): temporary startup instrumentation to surface the iOS white-screen
 // cause on-device (no Mac/Xcode console available). Remove once root-caused.
@@ -71,12 +73,40 @@ class _StartupErrorApp extends StatelessWidget {
   }
 }
 
-class FitnessBookingApp extends StatelessWidget {
+class FitnessBookingApp extends StatefulWidget {
   const FitnessBookingApp({super.key});
+
+  @override
+  State<FitnessBookingApp> createState() => _FitnessBookingAppState();
+}
+
+class _FitnessBookingAppState extends State<FitnessBookingApp> {
+  final _navigatorKey = GlobalKey<NavigatorState>();
+
+  @override
+  void initState() {
+    super.initState();
+    DeepLinkService.listenForRenewLink(_openRenewScreen);
+  }
+
+  @override
+  void dispose() {
+    DeepLinkService.dispose();
+    super.dispose();
+  }
+
+  void _openRenewScreen() {
+    // Signed-out users are already on LoginScreen via the authStateChanges
+    // stream below — pushing on top of it would strand them mid-sign-in.
+    if (FirebaseAuth.instance.currentUser == null) return;
+    _navigatorKey.currentState
+        ?.push(MaterialPageRoute(builder: (_) => const MembershipScreen()));
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: _navigatorKey,
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,

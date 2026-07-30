@@ -219,6 +219,14 @@ class _ClassCard extends StatelessWidget {
                 Text('${cls.location} · ${cls.coach}',
                     style: const TextStyle(
                         fontSize: 12, color: AppColors.textMuted)),
+                if (cls.description.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(cls.description,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 12, color: AppColors.textSecondary)),
+                ],
               ],
             ),
           ),
@@ -260,6 +268,7 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
   late final TextEditingController _duration;
   late final TextEditingController _groupSize;
   late final TextEditingController _location;
+  late final TextEditingController _description;
 
   String _type = '';
   String? _selectedFacilityId;
@@ -292,6 +301,7 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
     _duration = TextEditingController(text: e?.duration ?? '');
     _groupSize = TextEditingController(text: e?.groupSize ?? '');
     _location = TextEditingController(text: e?.location ?? '');
+    _description = TextEditingController(text: e?.description ?? '');
     _occurrence = e?.occurrence ?? 'weekly';
     _isActive = e?.isActive ?? true;
     _selectedFacilityId = e?.facilityId;
@@ -457,6 +467,7 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
     _duration.dispose();
     _groupSize.dispose();
     _location.dispose();
+    _description.dispose();
     super.dispose();
   }
 
@@ -521,6 +532,7 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
       startTime: _startTime.text.trim(),
       type: _type,
       image: _typeImages[_type] ?? '',
+      description: _description.text.trim(),
       isActive: _isActive,
       occurrence: _occurrence,
       specificDate: specificDateStr,
@@ -567,6 +579,8 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
                 padding: const EdgeInsets.all(16),
                 children: [
                   _field(_mode, 'Class Name', required: true),
+                  const SizedBox(height: 12),
+                  _field(_description, 'Description', maxLines: 3),
                   const SizedBox(height: 12),
                   _typeDropdown(),
                   const SizedBox(height: 12),
@@ -865,10 +879,12 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
     String label, {
     bool required = false,
     TextInputType keyboardType = TextInputType.text,
+    int maxLines = 1,
   }) {
     return TextFormField(
       controller: ctrl,
       keyboardType: keyboardType,
+      maxLines: maxLines,
       decoration: InputDecoration(
         labelText: label,
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),

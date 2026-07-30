@@ -35,7 +35,8 @@ class WaitingListService {
     }).length;
   }
 
-  /// Joins the waiting list; deducts 1 credit from the user.
+  /// Joins the waiting list; deducts 1 credit from the user, atomically
+  /// with creating the waiting-list doc.
   static Future<void> joinWaitingList({
     required String classId,
     required String userId,
@@ -54,8 +55,13 @@ class WaitingListService {
       requestedAt: DateTime.now(),
       status: 'waiting',
     );
-    await _col.add(entry.toFirestore());
-    await UserService.deductCredit(userId);
+    final entryRef = _col.doc();
+    await UserService.deductCreditAndWrite(userId, (tx, sourceEntryId) {
+      tx.set(entryRef, {
+        ...entry.toFirestore(),
+        'creditSourceEntryId': sourceEntryId,
+      });
+    });
     unawaited(ConfigService.logActivityEvent(
       eventType: 'Joined Waitlist',
       classId: classId,
@@ -73,7 +79,10 @@ class WaitingListService {
     if (!doc.exists) return;
     if (doc['status'] != 'waiting') return;
     await _col.doc(entryId).update({'status': 'expired'});
-    await UserService.addCredits(userId, 1);
+    await UserService.refundCredit(
+      userId,
+      sourceEntryId: doc.data()?['creditSourceEntryId'] as String?,
+    );
     final entry = WaitingListModel.fromFirestore(doc);
     unawaited(ConfigService.logActivityEvent(
       eventType: 'Left Waitlist',
@@ -246,7 +255,11 @@ class WaitingListService {
     await batch.commit();
     for (final doc in docs) {
       // Refund credit asynchronously
-      unawaited(UserService.addCredits(doc['userId'] as String, 1));
+      unawaited(UserService.refundCredit(
+        doc['userId'] as String,
+        sourceEntryId: (doc.data() as Map<String, dynamic>?)?['creditSourceEntryId']
+            as String?,
+      ));
       final entry = WaitingListModel.fromFirestore(doc);
       unawaited(ConfigService.logActivityEvent(
         eventType: 'Waitlist Expired',

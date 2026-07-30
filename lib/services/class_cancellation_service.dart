@@ -136,6 +136,7 @@ class ClassCancellationService {
       final bookingDate = (data['bookingDate'] as Timestamp).toDate();
       final bookingTime = data['bookingTime']?.toString() ?? '';
       final credits = (data['creditsUsed'] as int?) ?? 1;
+      final sourceEntryId = data['creditSourceEntryId'] as String?;
       if (uid.isEmpty) return;
 
       final userDoc = await _usersCol.doc(uid).get();
@@ -143,7 +144,8 @@ class ClassCancellationService {
       final userEmail = userDoc.data()?['email']?.toString() ?? '';
 
       if (credits > 0) {
-        await UserService.addCredits(uid, credits);
+        await UserService.refundCredit(uid,
+            sourceEntryId: sourceEntryId, amount: credits);
       }
 
       unawaited(ConfigService.logActivityEvent(

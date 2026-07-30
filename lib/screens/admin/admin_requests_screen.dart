@@ -834,7 +834,11 @@ class _RequestCardState extends State<_RequestCard> {
             final uid = doc['userId'] as String?;
             final credits = doc['creditsUsed'] as int? ?? 1;
             if (uid != null && credits > 0) {
-              refunds.add(UserService.addCredits(uid, credits));
+              refunds.add(UserService.refundCredit(
+                uid,
+                sourceEntryId: doc['creditSourceEntryId'] as String?,
+                amount: credits,
+              ));
             }
           }
           if (refunds.isNotEmpty) await Future.wait(refunds);

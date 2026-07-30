@@ -310,7 +310,7 @@ class _UserCard extends StatelessWidget {
                   const Icon(Icons.toll_outlined,
                       size: 14, color: AppColors.textMuted),
                   const SizedBox(width: 5),
-                  Text('${user.credits} credits',
+                  Text('${user.totalUsableCredits} credits',
                       style: const TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w600,
@@ -364,7 +364,9 @@ class _UserEditSheet extends StatefulWidget {
 class _UserEditSheetState extends State<_UserEditSheet> {
   late String _role;
   late TextEditingController _creditsCtrl;
+  late List<MembershipEntry> _memberships;
   bool _saving = false;
+  bool _sendingReminder = false;
 
   @override
   void initState() {
@@ -372,6 +374,7 @@ class _UserEditSheetState extends State<_UserEditSheet> {
     _role = widget.user.role;
     _creditsCtrl =
         TextEditingController(text: widget.user.credits.toString());
+    _memberships = List.of(widget.user.memberships);
   }
 
   @override
@@ -447,6 +450,92 @@ class _UserEditSheetState extends State<_UserEditSheet> {
 
   String _fmtDate(DateTime d) =>
       '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+
+  Future<void> _editPlanDates(int index) async {
+    final entry = _memberships[index];
+
+    final newStart = await showDatePicker(
+      context: context,
+      initialDate: entry.startDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now().add(const Duration(days: 3650)),
+      helpText: '${entry.planName} — start date',
+    );
+    if (newStart == null || !mounted) return;
+
+    final newEnd = await showDatePicker(
+      context: context,
+      initialDate:
+          entry.endDate.isAfter(newStart) ? entry.endDate : newStart,
+      firstDate: newStart,
+      lastDate: DateTime.now().add(const Duration(days: 3650)),
+      helpText: '${entry.planName} — end date',
+    );
+    if (newEnd == null || !mounted) return;
+
+    final updatedEntry = entry.copyWith(startDate: newStart, endDate: newEnd);
+    final newList = List<MembershipEntry>.of(_memberships)
+      ..[index] = updatedEntry;
+
+    setState(() => _saving = true);
+    await UserService.updateMemberships(widget.user.uid, newList);
+    if (!mounted) return;
+    setState(() {
+      _memberships = newList;
+      _saving = false;
+    });
+    AppToast.success(context, 'Plan dates updated');
+  }
+
+  /// Admin-only manual status override. Guarded against creating two
+  /// simultaneously-`active` entries, since credit deduction/gating
+  /// (UserService.deductCredit, UserModel.activeMembership) assumes at
+  /// most one active plan at a time.
+  Future<void> _setPlanStatus(int index, String newStatus) async {
+    if (newStatus == 'active' &&
+        _memberships.any((m) => m.isActive && m != _memberships[index])) {
+      AppToast.error(context,
+          'Another plan is already active — set it to expired first');
+      return;
+    }
+
+    final newList = List<MembershipEntry>.of(_memberships)
+      ..[index] = _memberships[index].copyWith(status: newStatus);
+
+    setState(() => _saving = true);
+    await UserService.updateMemberships(widget.user.uid, newList);
+    if (!mounted) return;
+    setState(() {
+      _memberships = newList;
+      _saving = false;
+    });
+    AppToast.success(context, 'Plan status updated');
+  }
+
+  static const _reminderSkipReasons = {
+    'no-active-plan': 'No active plan to remind about',
+    'already-queued': 'Already renewed — a plan is queued next',
+    'no-email': 'This user has no email on file',
+  };
+
+  Future<void> _sendReminder() async {
+    setState(() => _sendingReminder = true);
+    try {
+      final (sent, reason) =
+          await UserService.sendRenewalReminderNow(widget.user.uid);
+      if (!mounted) return;
+      if (sent) {
+        AppToast.success(context, 'Reminder sent to ${widget.user.name}');
+      } else {
+        AppToast.error(context,
+            _reminderSkipReasons[reason] ?? 'Nothing to remind — $reason');
+      }
+    } catch (e) {
+      if (mounted) AppToast.error(context, e.toString());
+    } finally {
+      if (mounted) setState(() => _sendingReminder = false);
+    }
+  }
 
   Future<void> _deactivate() async {
     final ok = await showDialog<bool>(
@@ -539,7 +628,7 @@ class _UserEditSheetState extends State<_UserEditSheet> {
               onChanged: (r) => setState(() => _role = r),
             ),
             const SizedBox(height: 16),
-            const Text('Credits',
+            const Text('Admin-Granted Credits',
                 style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
@@ -549,18 +638,52 @@ class _UserEditSheetState extends State<_UserEditSheet> {
               controller: _creditsCtrl,
               keyboardType: TextInputType.number,
               decoration: InputDecoration(
-                labelText: 'Credit balance',
+                labelText: 'Admin credit pool',
                 helperText:
-                    'Current: ${widget.user.credits} — set new total. '
+                    'Current: ${widget.user.credits} — set new total. This '
+                    'is separate from plan credits (see Plans below). '
                     'Raising it will ask for an expiry date and grant '
                     'unrestricted class access until then.',
-                helperMaxLines: 3,
+                helperMaxLines: 4,
                 border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(10)),
                 contentPadding: const EdgeInsets.symmetric(
                     horizontal: 14, vertical: 12),
               ),
             ),
+            if (_memberships.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              const Text('Plans',
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textSecondary)),
+              const SizedBox(height: 8),
+              ..._memberships.asMap().entries.map(
+                    (e) => _PlanRow(
+                      entry: e.value,
+                      onEdit: _saving ? null : () => _editPlanDates(e.key),
+                      onSetStatus: _saving
+                          ? null
+                          : (status) => _setPlanStatus(e.key, status),
+                    ),
+                  ),
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: _sendingReminder ? null : _sendReminder,
+                  icon: _sendingReminder
+                      ? const SizedBox(
+                          height: 14,
+                          width: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.mail_outline, size: 16),
+                  label: const Text('Send Renewal Reminder',
+                      style: TextStyle(fontSize: 12)),
+                ),
+              ),
+            ],
             if (widget.user.hasUnrestrictedAccess) ...[
               const SizedBox(height: 10),
               Container(
@@ -607,6 +730,122 @@ class _UserEditSheetState extends State<_UserEditSheet> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _PlanRow extends StatelessWidget {
+  final MembershipEntry entry;
+  final VoidCallback? onEdit;
+  final ValueChanged<String>? onSetStatus;
+
+  const _PlanRow({
+    required this.entry,
+    required this.onEdit,
+    required this.onSetStatus,
+  });
+
+  String _fmtDate(DateTime d) =>
+      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+
+  Color get _statusColor {
+    switch (entry.status) {
+      case 'active':
+        return AppColors.primary;
+      case 'queued':
+        return const Color(0xFFFFAB40);
+      default:
+        return AppColors.textMuted;
+    }
+  }
+
+  String get _statusLabel {
+    switch (entry.status) {
+      case 'active':
+        return 'Active';
+      case 'queued':
+        return 'Queued';
+      default:
+        return 'Expired';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.divider),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(entry.planName,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.textPrimary)),
+                    ),
+                    const SizedBox(width: 6),
+                    PopupMenuButton<String>(
+                      enabled: onSetStatus != null,
+                      onSelected: onSetStatus,
+                      tooltip: 'Change status',
+                      padding: EdgeInsets.zero,
+                      itemBuilder: (_) => const [
+                        PopupMenuItem(value: 'active', child: Text('Active')),
+                        PopupMenuItem(value: 'queued', child: Text('Queued')),
+                        PopupMenuItem(
+                            value: 'expired', child: Text('Expired')),
+                      ],
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: _statusColor.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          _statusLabel,
+                          style: TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w600,
+                            color: _statusColor,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '${_fmtDate(entry.startDate)} → ${_fmtDate(entry.endDate)} · '
+                  '${entry.creditsRemaining}/${entry.credits} credits',
+                  style: const TextStyle(
+                      fontSize: 11, color: AppColors.textMuted),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            onPressed: onEdit,
+            icon: const Icon(Icons.edit_calendar_outlined,
+                size: 18, color: AppColors.primary),
+            tooltip: 'Edit start/end date',
+            visualDensity: VisualDensity.compact,
+          ),
+        ],
       ),
     );
   }

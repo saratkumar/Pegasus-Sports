@@ -42,39 +42,95 @@ class AdminCreditGrant {
 }
 
 class MembershipEntry {
+  final String id;
   final String planName;
-  final int credits;
+  final int credits; // original amount granted at purchase — immutable
+  final int creditsRemaining; // mutable per-plan bucket, decremented on booking
+  final String status; // 'queued' | 'active' | 'expired'
   final DateTime startDate;
   final DateTime endDate;
   final DateTime purchasedAt;
+  final DateTime? reminderSentAt; // renewal-reminder idempotency marker
 
   MembershipEntry({
+    required this.id,
     required this.planName,
     required this.credits,
+    required this.creditsRemaining,
+    required this.status,
     required this.startDate,
     required this.endDate,
     required this.purchasedAt,
+    this.reminderSentAt,
   });
 
   factory MembershipEntry.fromMap(Map<String, dynamic> map) {
+    final purchasedAt = (map['purchasedAt'] as Timestamp).toDate();
+    final hasStatus = map['status'] is String;
     return MembershipEntry(
+      id: map['id'] as String? ??
+          '${map['planName']}_${purchasedAt.millisecondsSinceEpoch}',
       planName: map['planName'] ?? '',
       credits: map['credits'] ?? 0,
+      // Pre-rework entries never tracked a per-plan bucket/status — treat
+      // them as void rather than guessing a balance from the old pooled
+      // `credits` field (test data, no migration performed).
+      creditsRemaining: hasStatus ? (map['creditsRemaining'] ?? 0) : 0,
+      status: hasStatus ? map['status'] as String : 'expired',
       startDate: (map['startDate'] as Timestamp).toDate(),
       endDate: (map['endDate'] as Timestamp).toDate(),
-      purchasedAt: (map['purchasedAt'] as Timestamp).toDate(),
+      purchasedAt: purchasedAt,
+      reminderSentAt: (map['reminderSentAt'] as Timestamp?)?.toDate(),
     );
   }
 
   Map<String, dynamic> toMap() => {
+        'id': id,
         'planName': planName,
         'credits': credits,
+        'creditsRemaining': creditsRemaining,
+        'status': status,
         'startDate': Timestamp.fromDate(startDate),
         'endDate': Timestamp.fromDate(endDate),
         'purchasedAt': Timestamp.fromDate(purchasedAt),
+        if (reminderSentAt != null)
+          'reminderSentAt': Timestamp.fromDate(reminderSentAt!),
       };
 
-  bool get isActive => endDate.isAfter(DateTime.now());
+  /// Returns a copy with mutable fields replaced — used by the
+  /// transactional purchase/deduction/rollover logic to swap an entry in
+  /// place within the memberships array (Firestore arrays have no
+  /// per-element patch, so the whole array gets rewritten).
+  MembershipEntry copyWith({
+    int? creditsRemaining,
+    String? status,
+    DateTime? startDate,
+    DateTime? endDate,
+    DateTime? reminderSentAt,
+  }) {
+    return MembershipEntry(
+      id: id,
+      planName: planName,
+      credits: credits,
+      creditsRemaining: creditsRemaining ?? this.creditsRemaining,
+      status: status ?? this.status,
+      startDate: startDate ?? this.startDate,
+      endDate: endDate ?? this.endDate,
+      purchasedAt: purchasedAt,
+      reminderSentAt: reminderSentAt ?? this.reminderSentAt,
+    );
+  }
+
+  bool get isActive => status == 'active';
+  bool get isQueued => status == 'queued';
+  bool get isExpired => status == 'expired';
+
+  /// Pure date check — whether "now" falls within this entry's scheduled
+  /// window. Used only by the scheduled rollover job to decide status
+  /// transitions; never used for credit/access gating (status is
+  /// authoritative there, see [UserModel.activeMembership]).
+  bool get isDateWindowOpen =>
+      !startDate.isAfter(DateTime.now()) && endDate.isAfter(DateTime.now());
 }
 
 class UserModel {
@@ -86,7 +142,8 @@ class UserModel {
   final String role; // 'client', 'trainer', 'admin'
   final String? adminLevel; // 'super_admin', 'admin' — only for admin role
   final List<String> adminPermissions;
-  final int credits;
+  final int credits; // admin-granted credit pool only — see AdminCreditGrant.
+  // Plan credits live per-entry in memberships[].creditsRemaining.
   final List<MembershipEntry> memberships;
   final AdminCreditGrant? adminCreditGrant;
 
@@ -114,13 +171,28 @@ class UserModel {
     return adminPermissions.contains(permission);
   }
 
-  // The active membership is the one with the latest end date that hasn't expired.
+  // At most one membership entry is ever status=='active' (an invariant
+  // maintained by the purchase flow, credit deduction, and the daily
+  // rollover job) — so this is just a lookup, not a date comparison.
   MembershipEntry? get activeMembership {
-    final active = memberships.where((m) => m.isActive).toList();
-    if (active.isEmpty) return null;
-    active.sort((a, b) => b.endDate.compareTo(a.endDate));
-    return active.first;
+    for (final m in memberships) {
+      if (m.isActive) return m;
+    }
+    return null;
   }
+
+  /// Plans purchased while another plan was still active — queued to
+  /// activate once their predecessor's date window ends (or pulled forward
+  /// early if the active plan runs out of credits first).
+  List<MembershipEntry> get queuedMemberships {
+    final queued = memberships.where((m) => m.isQueued).toList();
+    queued.sort((a, b) => a.startDate.compareTo(b.startDate));
+    return queued;
+  }
+
+  /// Credits usable right now: the active plan's remaining bucket plus any
+  /// admin-granted pool. Queued plans' credits aren't usable yet.
+  int get totalUsableCredits => (activeMembership?.creditsRemaining ?? 0) + credits;
 
   /// The active admin-granted credit award, if any.
   AdminCreditGrant? get activeAdminGrant =>

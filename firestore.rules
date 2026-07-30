@@ -67,6 +67,18 @@ service cloud.firestore {
       allow create: if isSignedIn() && request.auth.uid == uid;
       allow update: if isSignedIn() && (
         isAdmin() ||
+        // NOTE: `credits`/`memberships` are deliberately NOT denylisted
+        // here, unlike role/adminLevel/adminPermissions. Booking (credit
+        // deduction/refund) and self-serve plan purchase run as
+        // client-side Firestore transactions in UserService — not Cloud
+        // Functions — so a signed-in user legitimately writes their own
+        // `credits`/`memberships` on every booking. That means a
+        // malicious client could in principle also forge these fields
+        // directly. Same class of pre-launch gap as the `mail` collection
+        // comment above: closing it properly means moving
+        // deductCredit/refundCredit/purchaseMembership into Cloud
+        // Functions so the client only ever *requests* an outcome it
+        // can't fabricate. Recommended before a public (non-beta) launch.
         (
           request.auth.uid == uid &&
           !request.resource.data.diff(resource.data).affectedKeys()

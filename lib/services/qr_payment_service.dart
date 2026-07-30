@@ -1,7 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/qr_payment_request_model.dart';
-import '../models/user_model.dart';
 import 'config_service.dart';
 import 'invoice_service.dart';
 import 'request_notification_service.dart';
@@ -92,20 +91,12 @@ class QrPaymentService {
     String? paymentRef,
   }) async {
     final adminUid = FirebaseAuth.instance.currentUser?.uid ?? '';
-    final now = DateTime.now();
-    final endDate = req.validityDays > 0
-        ? now.add(Duration(days: req.validityDays))
-        : now.add(const Duration(days: 365));
 
     await UserService.purchaseMembership(
       req.userId,
-      MembershipEntry(
-        planName: req.planName,
-        credits: req.credits,
-        startDate: now,
-        endDate: endDate,
-        purchasedAt: now,
-      ),
+      planName: req.planName,
+      credits: req.credits,
+      validityDays: req.validityDays,
     );
 
     final txRef = FirebaseFirestore.instance.collection('transactions').doc();

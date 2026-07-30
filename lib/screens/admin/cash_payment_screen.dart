@@ -140,20 +140,11 @@ class _CashPaymentScreenState extends State<CashPaymentScreen> {
 
     setState(() => _saving = true);
     try {
-      final now = DateTime.now();
-      final endDate = plan.validityDays > 0
-          ? now.add(Duration(days: plan.validityDays))
-          : now.add(const Duration(days: 365));
-
       await UserService.purchaseMembership(
         client.uid,
-        MembershipEntry(
-          planName: plan.name,
-          credits: credits,
-          startDate: now,
-          endDate: endDate,
-          purchasedAt: now,
-        ),
+        planName: plan.name,
+        credits: credits,
+        validityDays: plan.validityDays,
       );
 
       final txRef = FirebaseFirestore.instance.collection('transactions').doc();

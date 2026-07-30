@@ -13,6 +13,7 @@ class ClassModel {
   final String startTime;
   final String type;
   final String image;
+  final String description;
   final bool isActive;
   // Recurrence: 'weekly' | 'daily' | 'once' | 'monthly'
   final String occurrence;
@@ -37,6 +38,7 @@ class ClassModel {
     required this.startTime,
     required this.type,
     required this.image,
+    this.description = '',
     this.isActive = true,
     this.occurrence = 'weekly',
     this.specificDate,
@@ -86,6 +88,7 @@ class ClassModel {
       startTime: data['startTime'] ?? '',
       type: data['type'] ?? '',
       image: data['image'] ?? '',
+      description: data['description'] ?? '',
       isActive: data['isActive'] ?? true,
       occurrence: data['occurrence'] ?? 'weekly',
       specificDate: data['specificDate'],
@@ -106,6 +109,7 @@ class ClassModel {
         'startTime': startTime,
         'type': type,
         'image': image,
+        'description': description,
         'isActive': isActive,
         'occurrence': occurrence,
         if (specificDate != null) 'specificDate': specificDate,

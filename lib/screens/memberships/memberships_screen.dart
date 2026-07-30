@@ -229,11 +229,15 @@ class _MembershipScreenState extends State<MembershipScreen> {
                     final user = snap.data;
                     final activePlans =
                         user?.memberships.where((m) => m.isActive).toList() ?? [];
+                    final queuedPlans = user?.queuedMemberships ?? [];
 
                     return Column(
                       children: [
                         if (user != null)
-                          _CreditsAndPlansBanner(user: user, activePlans: activePlans),
+                          _CreditsAndPlansBanner(
+                              user: user,
+                              activePlans: activePlans,
+                              queuedPlans: queuedPlans),
                         const SizedBox(height: 8),
                         _CategoryBar(
                           categories: categories,
@@ -348,9 +352,13 @@ class _CategoryBar extends StatelessWidget {
 class _CreditsAndPlansBanner extends StatelessWidget {
   final UserModel user;
   final List<MembershipEntry> activePlans;
+  final List<MembershipEntry> queuedPlans;
 
-  const _CreditsAndPlansBanner(
-      {required this.user, required this.activePlans});
+  const _CreditsAndPlansBanner({
+    required this.user,
+    required this.activePlans,
+    required this.queuedPlans,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -377,7 +385,7 @@ class _CreditsAndPlansBanner extends StatelessWidget {
                   color: AppColors.primary, size: 20),
               const SizedBox(width: 8),
               Text(
-                '${user.credits} Credits',
+                '${user.totalUsableCredits} Credits',
                 style: const TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.w800,
@@ -404,6 +412,56 @@ class _CreditsAndPlansBanner extends StatelessWidget {
                 style: TextStyle(
                     fontSize: 12, color: AppColors.textSecondary)),
           ],
+          if (queuedPlans.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            const Text('Queued — starts once your current plan ends',
+                style: TextStyle(
+                    fontSize: 11,
+                    color: AppColors.textSecondary,
+                    fontWeight: FontWeight.w600)),
+            const SizedBox(height: 6),
+            ...queuedPlans.map((m) => _QueuedPlanRow(entry: m)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _QueuedPlanRow extends StatelessWidget {
+  final MembershipEntry entry;
+  const _QueuedPlanRow({required this.entry});
+
+  @override
+  Widget build(BuildContext context) {
+    final d = entry.startDate;
+    final label =
+        '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+    return Container(
+      margin: const EdgeInsets.only(top: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppColors.bg,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.divider),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.schedule_rounded,
+              color: AppColors.textMuted, size: 14),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(entry.planName,
+                style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary)),
+          ),
+          Text('starts $label',
+              style: const TextStyle(
+                  fontSize: 11,
+                  color: AppColors.textMuted,
+                  fontWeight: FontWeight.w600)),
         ],
       ),
     );

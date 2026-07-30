@@ -7,6 +7,18 @@ admin.initializeApp();
 // Deploy region — change to your nearest region if needed
 setGlobalOptions({ region: "asia-southeast1" });
 
+// Scheduled jobs (membership rollover + renewal reminder emails) — split
+// into their own module for readability, re-exported here since Firebase
+// only discovers exports from the file named in package.json's "main".
+const {
+  dailyMembershipRollover,
+  dailyRenewalReminders,
+  sendRenewalReminderNow,
+} = require("./scheduled");
+exports.dailyMembershipRollover = dailyMembershipRollover;
+exports.dailyRenewalReminders = dailyRenewalReminders;
+exports.sendRenewalReminderNow = sendRenewalReminderNow;
+
 // Lazily initialise Stripe so the secret key is read at call time,
 // not at cold-start (allows key rotation without redeployment).
 let _stripe;
@@ -59,6 +71,43 @@ exports.createPaymentIntent = onCall({ secrets: ["STRIPE_SECRET_KEY"] }, async (
   };
 });
 
+// ── membership queueing ─────────────────────────────────────────────────────
+// Mirrors UserService._resolveQueueTail/purchaseMembership in
+// lib/services/user_service.dart — keep the two in sync if this changes.
+// Decides whether a newly purchased plan activates immediately or queues
+// behind the user's current chain (nothing disturbs an already-active plan;
+// a queued plan's startDate is set to its predecessor's endDate, and it
+// only becomes usable once that window ends, or is pulled forward early by
+// the client's deductCredit if the predecessor runs out of credits first).
+function buildQueuedOrActiveMembership(db, existingMemberships, { planName, credits, validityDays }) {
+  const now = Date.now();
+
+  const queued = existingMemberships
+    .filter((m) => m.status === "queued")
+    .sort((a, b) => a.startDate.toMillis() - b.startDate.toMillis());
+
+  const tail =
+    queued.length > 0
+      ? queued[queued.length - 1]
+      : existingMemberships.find((m) => m.status === "active" && m.endDate.toMillis() > now) || null;
+
+  const startDate = tail ? tail.endDate.toDate() : new Date(now);
+  const status = tail ? "queued" : "active";
+  const endDate = new Date(startDate);
+  endDate.setDate(endDate.getDate() + (validityDays > 0 ? validityDays : 365));
+
+  return {
+    id: db.collection("users").doc().id,
+    planName,
+    credits,
+    creditsRemaining: credits,
+    status,
+    startDate: admin.firestore.Timestamp.fromDate(startDate),
+    endDate: admin.firestore.Timestamp.fromDate(endDate),
+    purchasedAt: admin.firestore.Timestamp.now(),
+  };
+}
+
 // ── confirmMembershipPayment ──────────────────────────────────────────────────
 // Called after Stripe confirms the payment client-side.
 // Verifies the PaymentIntent with Stripe (prevents forged requests),
@@ -98,40 +147,31 @@ exports.confirmMembershipPayment = onCall({ secrets: ["STRIPE_SECRET_KEY"] }, as
   }
 
   const uid = request.auth.uid;
-  const now = admin.firestore.Timestamp.now();
-  const endDate = new Date();
-  endDate.setDate(endDate.getDate() + (validityDays > 0 ? validityDays : 365));
-
-  const membership = {
-    planName,
-    credits,
-    startDate: now,
-    endDate: admin.firestore.Timestamp.fromDate(endDate),
-    purchasedAt: now,
-  };
-
   const db = admin.firestore();
+  const userRef = db.collection("users").doc(uid);
 
-  // Activate membership & record payment atomically
-  const batch = db.batch();
+  // Transactional (not a bare batch) since queueing vs. immediate
+  // activation depends on reading the user's current membership chain.
+  await db.runTransaction(async (tx) => {
+    const userSnap = await tx.get(userRef);
+    const existing = userSnap.data()?.memberships || [];
+    const membership = buildQueuedOrActiveMembership(db, existing, { planName, credits, validityDays });
 
-  batch.update(db.collection("users").doc(uid), {
-    memberships: admin.firestore.FieldValue.arrayUnion(membership),
-    credits: admin.firestore.FieldValue.increment(credits),
+    tx.update(userRef, {
+      memberships: admin.firestore.FieldValue.arrayUnion(membership),
+    });
+
+    tx.set(paymentsRef.doc(), {
+      userId: uid,
+      paymentIntentId,
+      planName,
+      amount: paymentIntent.amount / 100,
+      currency: paymentIntent.currency,
+      credits,
+      status: "succeeded",
+      createdAt: admin.firestore.Timestamp.now(),
+    });
   });
-
-  batch.set(paymentsRef.doc(), {
-    userId: uid,
-    paymentIntentId,
-    planName,
-    amount: paymentIntent.amount / 100,
-    currency: paymentIntent.currency,
-    credits,
-    status: "succeeded",
-    createdAt: now,
-  });
-
-  await batch.commit();
 
   return { success: true };
 });
@@ -203,19 +243,11 @@ exports.redeemFreeMembership = onCall(async (request) => {
     }
 
     const nowTs = admin.firestore.Timestamp.now();
-    const endDate = new Date();
-    endDate.setDate(endDate.getDate() + (validityDays > 0 ? validityDays : 365));
-    const membership = {
-      planName,
-      credits,
-      startDate: nowTs,
-      endDate: admin.firestore.Timestamp.fromDate(endDate),
-      purchasedAt: nowTs,
-    };
+    const existing = userSnap.data()?.memberships || [];
+    const membership = buildQueuedOrActiveMembership(db, existing, { planName, credits, validityDays });
 
     tx.update(userRef, {
       memberships: admin.firestore.FieldValue.arrayUnion(membership),
-      credits: admin.firestore.FieldValue.increment(credits),
     });
     tx.update(couponRef, {
       redeemedCount: admin.firestore.FieldValue.increment(1),

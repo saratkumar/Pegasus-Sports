@@ -104,7 +104,12 @@ class _ClassesScreenState extends State<ClassesScreen> {
     final user = await UserService.getUser(uid);
     if (user == null) return false;
     if (user.hasUnrestrictedAccess) return true;
-    for (final m in user.memberships.where((m) => m.isActive)) {
+    // Defensive endDate re-check, same reasoning as UserService's
+    // credit-deduction/purchase-queueing logic: `status` can lag up to a
+    // day behind the calendar if the nightly rollover hasn't run yet.
+    final now = DateTime.now();
+    for (final m in user.memberships
+        .where((m) => m.isActive && m.endDate.isAfter(now))) {
       final category = await MembershipPlanService.getCategoryForPlanName(m.planName);
       if (category?.trim().toLowerCase() == 'personal training') return true;
     }
@@ -172,20 +177,24 @@ class _ClassesScreenState extends State<ClassesScreen> {
         return;
       }
 
-      // Create booking
-      final bookingRef =
-          await FirebaseFirestore.instance.collection('bookings').add({
-        'userId': uid,
-        'classId': classId,
-        'displayName': cls.mode,
-        'bookingType': 'class',
-        'bookingDay': _selectedDayName,
-        'bookingDate': Timestamp.fromDate(_selectedDate),
-        'bookingTime': cls.startTime,
-        'createdAt': Timestamp.now(),
-        'bookedBy': uid,
-        'bookedByRole': 'client',
-        'creditsUsed': 1,
+      // Create booking + deduct credit atomically — a booking is never left
+      // orphaned without its credit actually being deducted, or vice versa.
+      final bookingRef = FirebaseFirestore.instance.collection('bookings').doc();
+      await UserService.deductCreditAndWrite(uid, (tx, sourceEntryId) {
+        tx.set(bookingRef, {
+          'userId': uid,
+          'classId': classId,
+          'displayName': cls.mode,
+          'bookingType': 'class',
+          'bookingDay': _selectedDayName,
+          'bookingDate': Timestamp.fromDate(_selectedDate),
+          'bookingTime': cls.startTime,
+          'createdAt': Timestamp.now(),
+          'bookedBy': uid,
+          'bookedByRole': 'client',
+          'creditsUsed': 1,
+          'creditSourceEntryId': sourceEntryId,
+        });
       });
 
       unawaited(ConfigService.logActivityEvent(
@@ -199,8 +208,6 @@ class _ClassesScreenState extends State<ClassesScreen> {
         bookedByRole: 'client',
         bookingId: bookingRef.id,
       ));
-
-      await UserService.deductCredit(uid);
 
       final userDoc = await FirebaseFirestore.instance
           .collection('users')
@@ -660,6 +667,12 @@ class _ClassCard extends StatelessWidget {
                     ),
                   ],
                 ),
+                if (item.description.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(item.description,
+                      style: const TextStyle(
+                          fontSize: 13, color: AppColors.textSecondary)),
+                ],
                 const SizedBox(height: 12),
                 _row(Icons.person_outline, item.coach),
                 const SizedBox(height: 5),

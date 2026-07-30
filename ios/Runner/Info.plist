@@ -36,6 +36,16 @@
 				<string>com.googleusercontent.apps.100021036305-40v7eo4nr0b8ss92pq4ikl08egro4ggu</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.psas.pegasus.renew</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>pegasus</string>
+			</array>
+		</dict>
 	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>

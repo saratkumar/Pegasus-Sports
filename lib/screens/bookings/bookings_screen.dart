@@ -111,12 +111,14 @@ class _BookingsTab extends StatelessWidget {
 
     final uid = FirebaseAuth.instance.currentUser!.uid;
     final creditsUsed = (data['creditsUsed'] as int?) ?? 1;
+    final sourceEntryId = data['creditSourceEntryId'] as String?;
 
     await FirebaseFirestore.instance.collection('bookings').doc(id).delete();
 
     // Refund credit
     if (creditsUsed > 0) {
-      await UserService.addCredits(uid, creditsUsed);
+      await UserService.refundCredit(uid,
+          sourceEntryId: sourceEntryId, amount: creditsUsed);
     }
 
     // Try to admit next person from waiting list
