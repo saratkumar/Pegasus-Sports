@@ -34,17 +34,6 @@ class MembershipPlanService {
     await _col.doc(id).delete();
   }
 
-  /// Looks up a plan's category by name — used to gate Personal Training
-  /// classes to clients whose active membership is in that category.
-  /// Queries all plans (not just active ones), since a client's active
-  /// membership can outlive an admin later deactivating that plan.
-  static Future<String?> getCategoryForPlanName(String planName) async {
-    final snap =
-        await _col.where('name', isEqualTo: planName).limit(1).get();
-    if (snap.docs.isEmpty) return null;
-    return snap.docs.first.data()['category'] as String?;
-  }
-
   /// One-time migration: if no plans exist yet in Firestore, seeds the
   /// collection with the plans that used to be hardcoded in the client so
   /// existing catalog data isn't lost when switching to admin-managed plans.

@@ -75,21 +75,24 @@ exports.createPaymentIntent = onCall({ secrets: ["STRIPE_SECRET_KEY"] }, async (
 // Mirrors UserService._resolveQueueTail/purchaseMembership in
 // lib/services/user_service.dart — keep the two in sync if this changes.
 // Decides whether a newly purchased plan activates immediately or queues
-// behind the user's current chain (nothing disturbs an already-active plan;
-// a queued plan's startDate is set to its predecessor's endDate, and it
-// only becomes usable once that window ends, or is pulled forward early by
-// the client's deductCredit if the predecessor runs out of credits first).
+// behind the user's current chain FOR THAT SAME PLAN NAME (every plan
+// follows its own route; a different plan's active/queued entries never
+// affect this one). Nothing disturbs an already-active plan; a queued
+// plan's startDate is set to its predecessor's endDate, and it only
+// becomes usable once that window ends, or is pulled forward early by the
+// client's deductCredit if the predecessor runs out of credits first).
 function buildQueuedOrActiveMembership(db, existingMemberships, { planName, credits, validityDays }) {
   const now = Date.now();
+  const sameChain = existingMemberships.filter((m) => m.planName === planName);
 
-  const queued = existingMemberships
+  const queued = sameChain
     .filter((m) => m.status === "queued")
     .sort((a, b) => a.startDate.toMillis() - b.startDate.toMillis());
 
   const tail =
     queued.length > 0
       ? queued[queued.length - 1]
-      : existingMemberships.find((m) => m.status === "active" && m.endDate.toMillis() > now) || null;
+      : sameChain.find((m) => m.status === "active" && m.endDate.toMillis() > now) || null;
 
   const startDate = tail ? tail.endDate.toDate() : new Date(now);
   const status = tail ? "queued" : "active";

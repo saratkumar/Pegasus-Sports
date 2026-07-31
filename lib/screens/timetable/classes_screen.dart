@@ -7,7 +7,6 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../../models/class_model.dart';
 import '../../services/class_service.dart';
 import '../../services/config_service.dart';
-import '../../services/membership_plan_service.dart';
 import '../../services/user_service.dart';
 import '../../services/waiting_list_service.dart';
 import '../../services/email_service.dart';
@@ -93,27 +92,27 @@ class _ClassesScreenState extends State<ClassesScreen> {
     if (picked != null) setState(() => _selectedDate = picked);
   }
 
-  /// PT-tier members (active membership category 'Personal Training') can
-  /// book any class type; everyone else is blocked from Personal Training
-  /// classes specifically. Non-PT class types are unrestricted. An active
-  /// admin-granted credit award (see [UserModel.hasUnrestrictedAccess])
+  /// Classes with a non-empty [ClassModel.allowedPlanNames] can only be
+  /// booked by clients holding a plan on that whitelist (set by an admin
+  /// when creating/editing the class) — everyone else is blocked. An empty
+  /// whitelist (the default) is unrestricted, same as every class today. An
+  /// active admin-granted credit award (see [UserModel.hasUnrestrictedAccess])
   /// always bypasses this gate, independent of whatever plan(s) the user
   /// actually holds.
-  Future<bool> _canAccessPersonalTraining(ClassModel cls, String uid) async {
-    if (cls.type.trim().toLowerCase() != 'personal training') return true;
+  Future<bool> _canBookClass(ClassModel cls, String uid) async {
+    if (cls.allowedPlanNames.isEmpty) return true;
     final user = await UserService.getUser(uid);
     if (user == null) return false;
     if (user.hasUnrestrictedAccess) return true;
     // Defensive endDate re-check, same reasoning as UserService's
     // credit-deduction/purchase-queueing logic: `status` can lag up to a
     // day behind the calendar if the nightly rollover hasn't run yet.
+    // Queued entries also count — they're eligible for pull-forward by
+    // UserService.deductCredit even before their date window opens.
     final now = DateTime.now();
-    for (final m in user.memberships
-        .where((m) => m.isActive && m.endDate.isAfter(now))) {
-      final category = await MembershipPlanService.getCategoryForPlanName(m.planName);
-      if (category?.trim().toLowerCase() == 'personal training') return true;
-    }
-    return false;
+    return user.memberships.any((m) =>
+        cls.allowedPlanNames.contains(m.planName) &&
+        ((m.isActive && m.endDate.isAfter(now)) || m.isQueued));
   }
 
   Future<void> _book(BuildContext context, ClassModel cls) async {
@@ -144,17 +143,18 @@ class _ClassesScreenState extends State<ClassesScreen> {
         return;
       }
 
-      if (!await _canAccessPersonalTraining(cls, uid)) {
+      if (!await _canBookClass(cls, uid)) {
         if (context.mounted) {
           AppToast.error(context,
-              "This is a Personal Training class — purchase a Personal Training plan to book it");
+              "Your current plan doesn't cover ${cls.mode} — purchase an eligible plan to book it");
         }
         return;
       }
 
       // Credit check + capacity check in parallel
       final results = await Future.wait([
-        UserService.hasEnoughCredits(uid),
+        UserService.hasEnoughCredits(uid,
+            allowedPlanNames: cls.allowedPlanNames),
         ClassService.getBookingCount(classId, _selectedDate),
       ]);
 
@@ -195,7 +195,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
           'creditsUsed': 1,
           'creditSourceEntryId': sourceEntryId,
         });
-      });
+      }, allowedPlanNames: cls.allowedPlanNames);
 
       unawaited(ConfigService.logActivityEvent(
         eventType: 'Booked',
@@ -266,10 +266,10 @@ class _ClassesScreenState extends State<ClassesScreen> {
       return;
     }
 
-    if (!await _canAccessPersonalTraining(cls, uid)) {
+    if (!await _canBookClass(cls, uid)) {
       if (context.mounted) {
         AppToast.error(context,
-            "This is a Personal Training class — purchase a Personal Training plan to join the waiting list");
+            "Your current plan doesn't cover ${cls.mode} — purchase an eligible plan to join the waiting list");
       }
       return;
     }
@@ -287,7 +287,8 @@ class _ClassesScreenState extends State<ClassesScreen> {
     }
 
     // Check credits
-    final hasCredits = await UserService.hasEnoughCredits(uid);
+    final hasCredits = await UserService.hasEnoughCredits(uid,
+        allowedPlanNames: cls.allowedPlanNames);
     if (!hasCredits) {
       if (context.mounted) {
         AppToast.error(context,
@@ -338,6 +339,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
       bookingDate: _selectedDate,
       bookingTime: cls.startTime,
       className: cls.mode,
+      allowedPlanNames: cls.allowedPlanNames,
     );
 
     if (context.mounted) {

@@ -106,31 +106,33 @@ class _BottomNavState extends State<BottomNav> {
     }
   }
 
-  List<NavigationDestination> get _dests {
+  List<NavigationDestination> _destsFor(bool compact) {
     switch (_effectiveRole) {
       case 'admin':
-        return const [
-          NavigationDestination(
+        return [
+          const NavigationDestination(
             icon: Icon(Icons.people_outline, color: Color(0xFF666666)),
             selectedIcon: Icon(Icons.people, color: AppColors.primary),
             label: 'Users',
           ),
           NavigationDestination(
-            icon: Icon(Icons.receipt_long_outlined, color: Color(0xFF666666)),
-            selectedIcon: Icon(Icons.receipt_long, color: AppColors.primary),
-            label: 'Transactions',
+            icon: const Icon(Icons.receipt_long_outlined,
+                color: Color(0xFF666666)),
+            selectedIcon: const Icon(Icons.receipt_long,
+                color: AppColors.primary),
+            label: compact ? 'Trans' : 'Transactions',
           ),
           NavigationDestination(
-            icon: Icon(Icons.history, color: Color(0xFF666666)),
-            selectedIcon: Icon(Icons.history, color: AppColors.primary),
-            label: 'Activity Log',
+            icon: const Icon(Icons.history, color: Color(0xFF666666)),
+            selectedIcon: const Icon(Icons.history, color: AppColors.primary),
+            label: compact ? 'Log' : 'Activity Log',
           ),
           NavigationDestination(
-            icon: Icon(Icons.inbox_outlined, color: Color(0xFF666666)),
-            selectedIcon: Icon(Icons.inbox, color: AppColors.primary),
-            label: 'Requests',
+            icon: const Icon(Icons.inbox_outlined, color: Color(0xFF666666)),
+            selectedIcon: const Icon(Icons.inbox, color: AppColors.primary),
+            label: compact ? 'Reqs' : 'Requests',
           ),
-          NavigationDestination(
+          const NavigationDestination(
             icon: Icon(Icons.more_horiz, color: Color(0xFF666666)),
             selectedIcon: Icon(Icons.more_horiz, color: AppColors.primary),
             label: 'More',
@@ -299,13 +301,23 @@ class _BottomNavState extends State<BottomNav> {
           border:
               Border(top: BorderSide(color: AppColors.divider, width: 1)),
         ),
-        child: NavigationBar(
-          selectedIndex: _index,
-          onDestinationSelected: (v) => setState(() => _index = v),
-          backgroundColor: AppColors.navBg,
-          indicatorColor: AppColors.primary.withValues(alpha: 0.25),
-          labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-          destinations: _dests,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final dests = _destsFor(false);
+            // Each destination needs roughly 80px to fit its label on one
+            // line; below that, swap in shortened labels instead of
+            // letting Material wrap them and blow up the bar's height.
+            final compact =
+                constraints.maxWidth / dests.length < 80;
+            return NavigationBar(
+              selectedIndex: _index,
+              onDestinationSelected: (v) => setState(() => _index = v),
+              backgroundColor: AppColors.navBg,
+              indicatorColor: AppColors.primary.withValues(alpha: 0.25),
+              labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+              destinations: compact ? _destsFor(true) : dests,
+            );
+          },
         ),
       ),
     );

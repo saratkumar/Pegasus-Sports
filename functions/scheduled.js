@@ -43,11 +43,13 @@ exports.dailyMembershipRollover = onSchedule(
           updated[i] = { ...m, status: "expired" };
           changed = true;
 
-          // Promote the earliest-starting queued entry, if any — mirrors
-          // UserService._resolveQueueTail's ordering.
+          // Promote the earliest-starting queued entry of the SAME plan,
+          // if any — every plan follows its own route, so a different
+          // plan's queued entry must never be promoted here. Mirrors
+          // UserService._resolveQueueTail's ordering, scoped to planName.
           const queued = updated
             .map((mm, idx) => ({ mm, idx }))
-            .filter(({ mm }) => mm.status === "queued");
+            .filter(({ mm }) => mm.status === "queued" && mm.planName === m.planName);
           if (queued.length > 0) {
             queued.sort((a, b) => a.mm.startDate.toMillis() - b.mm.startDate.toMillis());
             const nextIdx = queued[0].idx;
@@ -73,64 +75,87 @@ exports.dailyMembershipRollover = onSchedule(
 
 // ── shared reminder-sending logic ───────────────────────────────────────────
 // Used by both the nightly sweep (dailyRenewalReminders, requireWindow: true
-// — only within 14 days of expiry, only once) and the admin's on-demand
-// "Send Renewal Reminder" button (sendRenewalReminderNow, requireWindow:
-// false — admin explicitly asked for it right now, so the day-window and
-// already-sent guards don't apply). Both still skip a user who's already
-// queued a renewal — nudging someone who's already renewed isn't useful
-// regardless of who triggered the check.
+// — only within 14 days of expiry, only once per plan) and the admin's
+// on-demand "Send Renewal Reminder" button (sendRenewalReminderNow,
+// requireWindow: false — admin explicitly asked for it right now, so the
+// day-window and already-sent guards don't apply).
 //
-// Returns { sent: boolean, reason: string|null } — reason explains a no-op
-// (used by the admin callable to report back why nothing was sent).
+// A user can hold several concurrently-active plans (each on its own
+// route — see buildQueuedOrActiveMembership) so this evaluates and sends
+// independently per active entry: a queued Drop-In renewal must never
+// suppress a Yoga plan's reminder, and vice versa.
+//
+// Returns { results: [{ planName, sent, reason }] } — one entry per active
+// plan the user holds (empty array if they have no active plan at all).
+// `reason` is null on success, otherwise one of: already-queued,
+// already-sent, outside-window, no-email.
 async function sendRenewalReminderForUser(db, userRef, userData, { requireWindow }) {
   const memberships = userData.memberships;
-  if (!Array.isArray(memberships)) return { sent: false, reason: "no-memberships" };
+  if (!Array.isArray(memberships)) return { results: [] };
 
-  const active = memberships.find((m) => m.status === "active");
-  if (!active || !active.endDate) return { sent: false, reason: "no-active-plan" };
-
-  if (memberships.some((m) => m.status === "queued")) {
-    return { sent: false, reason: "already-queued" };
-  }
-
-  const now = new Date();
-  const daysLeft = dayDiff(now, active.endDate.toDate());
-
-  if (requireWindow) {
-    if (active.reminderSentAt) return { sent: false, reason: "already-sent" };
-    if (daysLeft < 0 || daysLeft > REMINDER_WINDOW_DAYS) return { sent: false, reason: "outside-window" };
-  }
+  const activeEntries = memberships.filter((m) => m.status === "active" && m.endDate);
+  if (activeEntries.length === 0) return { results: [] };
 
   const email = userData.email;
-  if (!email) return { sent: false, reason: "no-email" };
+  const now = new Date();
 
-  let sent = false;
-  await db.runTransaction(async (tx) => {
-    const freshSnap = await tx.get(userRef);
-    const freshMemberships = freshSnap.data()?.memberships || [];
-    const idx = freshMemberships.findIndex((m) => m.id === active.id);
-    if (idx === -1) return;
-    if (requireWindow && freshMemberships[idx].reminderSentAt) return;
-
-    const updated = [...freshMemberships];
-    updated[idx] = { ...updated[idx], reminderSentAt: admin.firestore.Timestamp.now() };
-    tx.update(userRef, { memberships: updated });
-
-    tx.set(
-      db.collection("mail").doc(),
-      buildRenewalReminderEmail({
-        to: email,
-        name: userData.name || "there",
-        planName: active.planName,
-        endDate: active.endDate.toDate(),
-        creditsRemaining: active.creditsRemaining || 0,
-        daysLeft: Math.max(daysLeft, 0),
-      })
+  // Evaluate eligibility per active entry, independent of the others.
+  const evaluations = activeEntries.map((active) => {
+    const sameChainQueued = memberships.some(
+      (m) => m.status === "queued" && m.planName === active.planName
     );
-    sent = true;
+    if (sameChainQueued) return { active, reason: "already-queued" };
+
+    const daysLeft = dayDiff(now, active.endDate.toDate());
+    if (requireWindow) {
+      if (active.reminderSentAt) return { active, reason: "already-sent" };
+      if (daysLeft < 0 || daysLeft > REMINDER_WINDOW_DAYS) {
+        return { active, reason: "outside-window" };
+      }
+    }
+    if (!email) return { active, reason: "no-email" };
+    return { active, daysLeft };
   });
 
-  return { sent, reason: sent ? null : "already-sent" };
+  const toSend = evaluations.filter((e) => !e.reason);
+  const sentIds = new Set();
+
+  if (toSend.length > 0) {
+    await db.runTransaction(async (tx) => {
+      const freshSnap = await tx.get(userRef);
+      const freshMemberships = freshSnap.data()?.memberships || [];
+      const updated = [...freshMemberships];
+
+      for (const { active, daysLeft } of toSend) {
+        const idx = updated.findIndex((m) => m.id === active.id);
+        if (idx === -1) continue;
+        if (requireWindow && updated[idx].reminderSentAt) continue; // lost a race
+
+        updated[idx] = { ...updated[idx], reminderSentAt: admin.firestore.Timestamp.now() };
+        tx.set(
+          db.collection("mail").doc(),
+          buildRenewalReminderEmail({
+            to: email,
+            name: userData.name || "there",
+            planName: active.planName,
+            endDate: active.endDate.toDate(),
+            creditsRemaining: active.creditsRemaining || 0,
+            daysLeft: Math.max(daysLeft, 0),
+          })
+        );
+        sentIds.add(active.id);
+      }
+      tx.update(userRef, { memberships: updated });
+    });
+  }
+
+  return {
+    results: evaluations.map((e) => ({
+      planName: e.active.planName,
+      sent: sentIds.has(e.active.id),
+      reason: sentIds.has(e.active.id) ? null : e.reason || "already-sent",
+    })),
+  };
 }
 
 // ── dailyRenewalReminders ───────────────────────────────────────────────────
@@ -153,10 +178,11 @@ exports.dailyRenewalReminders = onSchedule(
 
 // ── sendRenewalReminderNow ──────────────────────────────────────────────────
 // Admin-only: the "Send Renewal Reminder" button in the user management
-// screen. Sends immediately for the target user's active plan, bypassing
-// the 14-day window and the once-only guard (an explicit manual trigger is
-// its own confirmation) — but still skips if they've already queued a
-// renewal, same reasoning as the automatic sweep.
+// screen. Sends immediately for every plan the target user currently has
+// active (one email each), bypassing the 14-day window and the once-only
+// guard (an explicit manual trigger is its own confirmation) — but a given
+// plan is still skipped individually if it already has a renewal queued
+// behind it, same reasoning as the automatic sweep.
 exports.sendRenewalReminderNow = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Must be signed in.");

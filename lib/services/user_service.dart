@@ -3,6 +3,18 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/user_model.dart';
 
+/// One plan's outcome from [UserService.sendRenewalReminderNow] — a user
+/// can hold several concurrently-active plans, so a single button tap can
+/// yield one result per plan. [reason] is null on success, otherwise one
+/// of: already-queued, no-email.
+class ReminderResult {
+  final String planName;
+  final bool sent;
+  final String? reason;
+
+  ReminderResult({required this.planName, required this.sent, this.reason});
+}
+
 class UserService {
   static final _db = FirebaseFirestore.instance;
   // Cloud Functions are deployed to asia-southeast1 (see functions/index.js
@@ -115,22 +127,29 @@ class UserService {
     return data;
   }
 
-  /// Deducts one credit for a booking. Draws from the active plan's bucket
-  /// first; if that's exhausted (but its date window hasn't ended — a
-  /// rollover just hasn't run yet, that's handled separately), pulls the
-  /// earliest queued plan forward early to cover it; finally falls back to
-  /// the admin-granted pool. Returns the membership entry id the credit was
-  /// drawn from, or null if it came from the admin pool — callers should
-  /// store this on the booking/waiting-list doc (alongside `creditsUsed`)
-  /// so a later refund can be routed back to the correct bucket via
-  /// [refundCredit]. Runs as a transaction since, unlike a flat pooled
-  /// decrement, this branches on which bucket to draw from and can flip a
-  /// queued plan to active — not safe as a bare increment under concurrent
-  /// bookings.
-  static Future<String?> deductCredit(String uid) {
+  /// Deducts one credit for a booking. [allowedPlanNames] is the booked
+  /// class's plan whitelist (empty = unrestricted, any plan/pool works).
+  /// Draws from an eligible active plan's bucket first; if that's exhausted
+  /// (but its date window hasn't ended — a rollover just hasn't run yet,
+  /// that's handled separately), pulls the earliest eligible queued plan of
+  /// the same chain forward early to cover it; finally falls back to the
+  /// admin-granted pool, which is always unrestricted regardless of
+  /// [allowedPlanNames] (mirrors [UserModel.hasUnrestrictedAccess]). Returns
+  /// the membership entry id the credit was drawn from, or null if it came
+  /// from the admin pool — callers should store this on the booking/
+  /// waiting-list doc (alongside `creditsUsed`) so a later refund can be
+  /// routed back to the correct bucket via [refundCredit]. Runs as a
+  /// transaction since, unlike a flat pooled decrement, this branches on
+  /// which bucket to draw from and can flip a queued plan to active — not
+  /// safe as a bare increment under concurrent bookings.
+  static Future<String?> deductCredit(
+    String uid, {
+    List<String> allowedPlanNames = const [],
+  }) {
     final userRef = _db.collection('users').doc(uid);
-    return _db.runTransaction<String?>(
-        (tx) => _selectAndDeductWithinTx(tx, userRef));
+    return _db.runTransaction<String?>((tx) => _selectAndDeductWithinTx(
+        tx, userRef,
+        allowedPlanNames: allowedPlanNames));
   }
 
   /// Runs [writeDoc] (typically one `tx.set` for a new booking or
@@ -142,21 +161,28 @@ class UserService {
   /// [writeDoc] is handed the resolved credit source entry id (null =
   /// drawn from the admin pool) to store alongside `creditsUsed` on the
   /// doc, so a later cancellation can refund it via [refundCredit].
+  /// [allowedPlanNames] — see [deductCredit].
   static Future<void> deductCreditAndWrite(
     String uid,
-    void Function(Transaction tx, String? sourceEntryId) writeDoc,
-  ) async {
+    void Function(Transaction tx, String? sourceEntryId) writeDoc, {
+    List<String> allowedPlanNames = const [],
+  }) async {
     final userRef = _db.collection('users').doc(uid);
     await _db.runTransaction((tx) async {
-      final source = await _selectAndDeductWithinTx(tx, userRef);
+      final source = await _selectAndDeductWithinTx(tx, userRef,
+          allowedPlanNames: allowedPlanNames);
       writeDoc(tx, source);
     });
   }
 
+  static bool _isEligiblePlan(MembershipEntry m, List<String> allowedPlanNames) =>
+      allowedPlanNames.isEmpty || allowedPlanNames.contains(m.planName);
+
   static Future<String?> _selectAndDeductWithinTx(
     Transaction tx,
-    DocumentReference<Map<String, dynamic>> userRef,
-  ) async {
+    DocumentReference<Map<String, dynamic>> userRef, {
+    List<String> allowedPlanNames = const [],
+  }) async {
     final snap = await tx.get(userRef);
     final data = snap.data();
     if (data == null) throw StateError('User not found');
@@ -164,32 +190,42 @@ class UserService {
     final pooledCredits = data['credits'] as int? ?? 0;
     final now = DateTime.now();
 
-    var activeIdx = memberships.indexWhere((m) => m.isActive);
-    if (activeIdx != -1 && !memberships[activeIdx].endDate.isAfter(now)) {
-      activeIdx = -1; // date window has actually lapsed; rollover hasn't run yet
-    }
+    // An eligible active entry whose date window is genuinely still open
+    // (re-checked against `now`, not just `status`, since a rollover-lag
+    // window can leave a stale 'active' entry past its endDate) and that
+    // still has credit.
+    final activeWithCreditsIdx = memberships.indexWhere((m) =>
+        m.isActive &&
+        m.endDate.isAfter(now) &&
+        _isEligiblePlan(m, allowedPlanNames) &&
+        m.creditsRemaining > 0);
 
-    if (activeIdx != -1 && memberships[activeIdx].creditsRemaining > 0) {
-      final entry = memberships[activeIdx];
-      memberships[activeIdx] =
+    if (activeWithCreditsIdx != -1) {
+      final entry = memberships[activeWithCreditsIdx];
+      memberships[activeWithCreditsIdx] =
           entry.copyWith(creditsRemaining: entry.creditsRemaining - 1);
       tx.update(userRef, {'memberships': _toMaps(memberships)});
       return entry.id;
     }
 
-    final queuedIdx = _earliestQueuedWithCredits(memberships);
+    final queuedIdx = _earliestQueuedWithCredits(memberships, allowedPlanNames);
     if (queuedIdx != -1) {
-      if (activeIdx != -1) {
-        memberships[activeIdx] =
-            memberships[activeIdx].copyWith(status: 'expired');
+      final promoted = memberships[queuedIdx];
+      // Step down the entry this one chains behind — same planName only,
+      // never an unrelated plan's active entry.
+      final sameChainActiveIdx = memberships.indexWhere(
+          (m) => m.isActive && m.planName == promoted.planName);
+      if (sameChainActiveIdx != -1 &&
+          memberships[sameChainActiveIdx].endDate.isAfter(now)) {
+        memberships[sameChainActiveIdx] =
+            memberships[sameChainActiveIdx].copyWith(status: 'expired');
       }
-      final entry = memberships[queuedIdx];
-      memberships[queuedIdx] = entry.copyWith(
+      memberships[queuedIdx] = promoted.copyWith(
         status: 'active',
-        creditsRemaining: entry.creditsRemaining - 1,
+        creditsRemaining: promoted.creditsRemaining - 1,
       );
       tx.update(userRef, {'memberships': _toMaps(memberships)});
-      return entry.id;
+      return promoted.id;
     }
 
     if (pooledCredits > 0) {
@@ -203,17 +239,25 @@ class UserService {
   /// Read-only precheck mirroring [deductCredit]'s bucket-selection logic,
   /// used to short-circuit the "no credits" UI message before attempting a
   /// booking. The transaction in [deductCredit] remains authoritative.
-  static Future<bool> hasEnoughCredits(String uid) async {
+  /// [allowedPlanNames] — see [deductCredit].
+  static Future<bool> hasEnoughCredits(
+    String uid, {
+    List<String> allowedPlanNames = const [],
+  }) async {
     final user = await getUser(uid);
     if (user == null) return false;
     final now = DateTime.now();
-    final active = user.activeMembership;
-    if (active != null &&
-        active.endDate.isAfter(now) &&
-        active.creditsRemaining > 0) {
-      return true;
-    }
-    if (user.queuedMemberships.any((m) => m.creditsRemaining > 0)) return true;
+
+    final hasActiveCredit = user.activeMemberships.any((m) =>
+        _isEligiblePlan(m, allowedPlanNames) &&
+        m.endDate.isAfter(now) &&
+        m.creditsRemaining > 0);
+    if (hasActiveCredit) return true;
+
+    final hasQueuedCredit = user.queuedMemberships.any(
+        (m) => _isEligiblePlan(m, allowedPlanNames) && m.creditsRemaining > 0);
+    if (hasQueuedCredit) return true;
+
     return user.credits > 0;
   }
 
@@ -272,7 +316,7 @@ class UserService {
       final memberships = _parseMemberships(snap.data() ?? {});
       final now = DateTime.now();
 
-      final tail = _resolveQueueTail(memberships, now);
+      final tail = _resolveQueueTail(memberships, now, planName);
       final startDate = tail?.endDate ?? now;
       final status = tail == null ? 'active' : 'queued';
       final endDate =
@@ -305,33 +349,45 @@ class UserService {
   static List<Map<String, dynamic>> _toMaps(List<MembershipEntry> entries) =>
       entries.map((m) => m.toMap()).toList();
 
-  /// The entry a new purchase should queue behind: the queued entry with
-  /// the latest startDate if one exists (chaining behind it), else the
-  /// currently active entry if its date window is still genuinely open
-  /// (re-checked against `now`, not just its `status`, to cover the window
-  /// where a plan's date has lapsed but the nightly rollover hasn't run
-  /// yet), else null (nothing to queue behind — activate immediately).
+  /// The entry a new purchase of [planName] should queue behind: the queued
+  /// entry of the *same plan* with the latest startDate if one exists
+  /// (chaining behind it), else that plan's currently active entry if its
+  /// date window is still genuinely open (re-checked against `now`, not
+  /// just its `status`, to cover the window where a plan's date has lapsed
+  /// but the nightly rollover hasn't run yet), else null (nothing to queue
+  /// behind — activate immediately). Every plan follows its own route:
+  /// entries of other plan names never affect this chain.
   static MembershipEntry? _resolveQueueTail(
     List<MembershipEntry> memberships,
     DateTime now,
+    String planName,
   ) {
-    final queued = memberships.where((m) => m.isQueued).toList()
+    final sameChain = memberships.where((m) => m.planName == planName);
+    final queued = sameChain.where((m) => m.isQueued).toList()
       ..sort((a, b) => a.startDate.compareTo(b.startDate));
     if (queued.isNotEmpty) return queued.last;
 
-    for (final m in memberships) {
+    for (final m in sameChain) {
       if (m.isActive && m.endDate.isAfter(now)) return m;
     }
     return null;
   }
 
-  /// Index of the queued entry with the earliest startDate that still has
-  /// credits left, or -1 if none. Used by [deductCredit]'s pull-forward.
-  static int _earliestQueuedWithCredits(List<MembershipEntry> memberships) {
+  /// Index of the queued entry — restricted to [allowedPlanNames] if
+  /// non-empty — with the earliest startDate that still has credits left,
+  /// or -1 if none. Used by [deductCredit]'s pull-forward.
+  static int _earliestQueuedWithCredits(
+    List<MembershipEntry> memberships,
+    List<String> allowedPlanNames,
+  ) {
     final candidates = <MapEntry<int, MembershipEntry>>[];
     for (var i = 0; i < memberships.length; i++) {
       final m = memberships[i];
-      if (m.isQueued && m.creditsRemaining > 0) candidates.add(MapEntry(i, m));
+      if (m.isQueued &&
+          m.creditsRemaining > 0 &&
+          _isEligiblePlan(m, allowedPlanNames)) {
+        candidates.add(MapEntry(i, m));
+      }
     }
     if (candidates.isEmpty) return -1;
     candidates.sort((a, b) => a.value.startDate.compareTo(b.value.startDate));
@@ -353,19 +409,26 @@ class UserService {
 
   /// Admin-only "Send Renewal Reminder" action — triggers the
   /// `sendRenewalReminderNow` Cloud Function, which sends the same email
-  /// the nightly T-14 sweep would, immediately and regardless of how many
-  /// days are actually left (an explicit manual trigger is its own
-  /// confirmation). Still skips if the user's already queued a renewal.
-  /// Returns `(sent, reason)` — `reason` is null on success, otherwise one
-  /// of: no-active-plan, already-queued, no-email.
-  static Future<(bool sent, String? reason)> sendRenewalReminderNow(
+  /// the nightly T-14 sweep would for every plan the user currently has
+  /// active, immediately and regardless of how many days are actually left
+  /// (an explicit manual trigger is its own confirmation). A plan is
+  /// skipped individually if it already has a renewal queued behind it.
+  /// Returns one `ReminderResult` per active plan the user holds (empty if
+  /// they have no active plan at all).
+  static Future<List<ReminderResult>> sendRenewalReminderNow(
       String uid) async {
     final result =
         await _functions.httpsCallable('sendRenewalReminderNow').call({
       'uid': uid,
     });
-    final data = result.data as Map;
-    return (data['sent'] as bool, data['reason'] as String?);
+    final results = (result.data as Map)['results'] as List;
+    return results
+        .map((r) => ReminderResult(
+              planName: r['planName'] as String,
+              sent: r['sent'] as bool,
+              reason: r['reason'] as String?,
+            ))
+        .toList();
   }
 
   /// Records an admin-granted credit increase — separate from

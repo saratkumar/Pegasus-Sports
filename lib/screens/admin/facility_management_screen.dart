@@ -237,7 +237,8 @@ class _FacilityFormScreenState extends State<_FacilityFormScreen> {
       body: Form(
         key: _formKey,
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: EdgeInsets.fromLTRB(
+              16, 16, 16, 16 + MediaQuery.of(context).padding.bottom),
           children: [
             _field(_name, 'Facility Name', required: true),
             const SizedBox(height: 12),

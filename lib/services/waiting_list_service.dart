@@ -44,6 +44,7 @@ class WaitingListService {
     required DateTime bookingDate,
     required String bookingTime,
     required String className,
+    List<String> allowedPlanNames = const [],
   }) async {
     final entry = WaitingListModel(
       classId: classId,
@@ -61,7 +62,7 @@ class WaitingListService {
         ...entry.toFirestore(),
         'creditSourceEntryId': sourceEntryId,
       });
-    });
+    }, allowedPlanNames: allowedPlanNames);
     unawaited(ConfigService.logActivityEvent(
       eventType: 'Joined Waitlist',
       classId: classId,

@@ -488,14 +488,17 @@ class _UserEditSheetState extends State<_UserEditSheet> {
   }
 
   /// Admin-only manual status override. Guarded against creating two
-  /// simultaneously-`active` entries, since credit deduction/gating
-  /// (UserService.deductCredit, UserModel.activeMembership) assumes at
-  /// most one active plan at a time.
+  /// simultaneously-`active` entries of the *same plan*, since credit
+  /// deduction/gating (UserService.deductCredit, UserModel.activeMemberships)
+  /// assumes at most one active entry per plan's own chain — different
+  /// plans are independent and may both be active at once.
   Future<void> _setPlanStatus(int index, String newStatus) async {
+    final planName = _memberships[index].planName;
     if (newStatus == 'active' &&
-        _memberships.any((m) => m.isActive && m != _memberships[index])) {
+        _memberships.any((m) =>
+            m.isActive && m != _memberships[index] && m.planName == planName)) {
       AppToast.error(context,
-          'Another plan is already active — set it to expired first');
+          'Another $planName plan is already active — set it to expired first');
       return;
     }
 
@@ -513,22 +516,39 @@ class _UserEditSheetState extends State<_UserEditSheet> {
   }
 
   static const _reminderSkipReasons = {
-    'no-active-plan': 'No active plan to remind about',
-    'already-queued': 'Already renewed — a plan is queued next',
-    'no-email': 'This user has no email on file',
+    'already-queued': 'already renewed — a plan is queued next',
+    'already-sent': 'already sent recently',
+    'no-email': 'this user has no email on file',
   };
 
+  /// A user can hold several concurrently-active plans, so this can send
+  /// zero, one, or several emails in one tap — summarize accordingly.
   Future<void> _sendReminder() async {
     setState(() => _sendingReminder = true);
     try {
-      final (sent, reason) =
-          await UserService.sendRenewalReminderNow(widget.user.uid);
+      final results = await UserService.sendRenewalReminderNow(widget.user.uid);
       if (!mounted) return;
-      if (sent) {
-        AppToast.success(context, 'Reminder sent to ${widget.user.name}');
+      if (results.isEmpty) {
+        AppToast.error(context, 'No active plan to remind about');
       } else {
-        AppToast.error(context,
-            _reminderSkipReasons[reason] ?? 'Nothing to remind — $reason');
+        final sent = results.where((r) => r.sent).toList();
+        final skipped = results.where((r) => !r.sent).toList();
+        // A single SnackBar slot (AppToast clears any prior one before
+        // showing) — combine both outcomes into one message rather than
+        // firing two toasts where the second would just hide the first.
+        final parts = <String>[];
+        if (sent.isNotEmpty) {
+          parts.add('Sent: ${sent.map((r) => r.planName).join(', ')}');
+        }
+        if (skipped.isNotEmpty) {
+          parts.add('Skipped: ${skipped.map((r) => '${r.planName} (${_reminderSkipReasons[r.reason] ?? r.reason})').join(', ')}');
+        }
+        final message = parts.join(' — ');
+        if (sent.isNotEmpty) {
+          AppToast.success(context, message);
+        } else {
+          AppToast.error(context, message);
+        }
       }
     } catch (e) {
       if (mounted) AppToast.error(context, e.toString());

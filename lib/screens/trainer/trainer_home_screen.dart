@@ -289,7 +289,8 @@ class _TrainerHomeScreenState extends State<TrainerHomeScreen> {
     );
     if (selected == null) return;
 
-    final hasCredits = await UserService.hasEnoughCredits(selected.uid);
+    final hasCredits = await UserService.hasEnoughCredits(selected.uid,
+        allowedPlanNames: cls.allowedPlanNames);
     if (!hasCredits) {
       if (!mounted) return;
       final req = await showDialog<bool>(
@@ -369,7 +370,7 @@ class _TrainerHomeScreenState extends State<TrainerHomeScreen> {
         'creditsUsed': 1,
         'creditSourceEntryId': sourceEntryId,
       });
-    });
+    }, allowedPlanNames: cls.allowedPlanNames);
     unawaited(ConfigService.logActivityEvent(
       eventType: 'Booked',
       classId: cls.effectiveId,

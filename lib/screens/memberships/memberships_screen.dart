@@ -262,8 +262,9 @@ class _MembershipScreenState extends State<MembershipScreen> {
                             itemBuilder: (_, i) {
                               final plan = plans[i];
                               final color = PlanCategoryStyle.of(plan.category).color;
-                              final isOwned =
-                                  activePlans.any((m) => m.planName == plan.name);
+                              final isOwned = activePlans
+                                      .any((m) => m.planName == plan.name) ||
+                                  queuedPlans.any((m) => m.planName == plan.name);
                               return _PlanCard(
                                 plan: plan,
                                 color: color,
@@ -718,22 +719,22 @@ class _PlanCard extends StatelessWidget {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: isOwned ? null : onSelect,
+                    // Buying a plan you already hold is a renewal, not a
+                    // duplicate — it queues behind your existing chain for
+                    // this plan (see UserService.purchaseMembership), so
+                    // the button stays enabled instead of blocking it.
+                    onPressed: onSelect,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor:
-                          isOwned ? AppColors.divider : color.withValues(alpha: 0.15),
-                      foregroundColor: isOwned ? AppColors.textMuted : color,
+                      backgroundColor: color.withValues(alpha: 0.15),
+                      foregroundColor: color,
                       elevation: 0,
-                      side: BorderSide(
-                          color: isOwned
-                              ? AppColors.divider
-                              : color.withValues(alpha: 0.4)),
+                      side: BorderSide(color: color.withValues(alpha: 0.4)),
                       padding: const EdgeInsets.symmetric(vertical: 12),
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12)),
                     ),
                     child: Text(
-                      isOwned ? 'Active Plan' : 'Purchase Plan',
+                      isOwned ? 'Renew Plan' : 'Purchase Plan',
                       style: const TextStyle(
                           fontWeight: FontWeight.w700, fontSize: 14),
                     ),

@@ -235,7 +235,8 @@ class _CashPaymentScreenState extends State<CashPaymentScreen> {
       body: _loading
           ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
           : ListView(
-              padding: const EdgeInsets.all(16),
+              padding: EdgeInsets.fromLTRB(
+                  16, 16, 16, 16 + MediaQuery.of(context).padding.bottom),
               children: [
                 const Text(
                   'Use this when a client pays outside the app (cash, bank transfer, etc). '

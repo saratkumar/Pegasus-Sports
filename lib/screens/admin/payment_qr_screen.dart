@@ -58,7 +58,8 @@ class _PaymentQrScreenState extends State<PaymentQrScreen> {
             _captionCtrl.text = snap.data?['caption']?.toString() ?? '';
           }
           return ListView(
-            padding: const EdgeInsets.all(16),
+            padding: EdgeInsets.fromLTRB(
+                16, 16, 16, 16 + MediaQuery.of(context).padding.bottom),
             children: [
               const Text(
                 "Shown to clients at checkout as an alternative to card "

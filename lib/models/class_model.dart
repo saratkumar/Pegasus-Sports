@@ -24,6 +24,10 @@ class ClassModel {
   // Per-session capacity overrides: 'YYYY-MM-DD' → total capacity for that day
   // Populated when admin approves a slot-increase request for a specific session
   final Map<String, int> sessionSlotOverrides;
+  // Membership plan names allowed to book this class — empty means
+  // unrestricted (any plan or the admin-granted credit pool works, the
+  // default for every class unless an admin explicitly restricts it).
+  final List<String> allowedPlanNames;
 
   ClassModel({
     this.id,
@@ -44,6 +48,7 @@ class ClassModel {
     this.specificDate,
     this.cancelledDates = const [],
     this.sessionSlotOverrides = const {},
+    this.allowedPlanNames = const [],
   });
 
   String get effectiveId => id ?? '${day}_${mode}_$startTime';
@@ -75,6 +80,10 @@ class ClassModel {
         if (k is String && v is int) sessionSlotOverrides[k] = v;
       });
     }
+    final rawAllowedPlanNames = data['allowedPlanNames'];
+    final allowedPlanNames = rawAllowedPlanNames is List
+        ? rawAllowedPlanNames.map((e) => e.toString()).toList()
+        : <String>[];
     return ClassModel(
       id: doc.id,
       day: data['day'] ?? '',
@@ -94,6 +103,7 @@ class ClassModel {
       specificDate: data['specificDate'],
       cancelledDates: cancelledDates,
       sessionSlotOverrides: sessionSlotOverrides,
+      allowedPlanNames: allowedPlanNames,
     );
   }
 
@@ -113,6 +123,7 @@ class ClassModel {
         'isActive': isActive,
         'occurrence': occurrence,
         if (specificDate != null) 'specificDate': specificDate,
+        'allowedPlanNames': allowedPlanNames,
         // cancelledDates and sessionSlotOverrides are managed via targeted
         // Firestore arrayUnion / field updates — never overwrite them here
         'updatedAt': FieldValue.serverTimestamp(),

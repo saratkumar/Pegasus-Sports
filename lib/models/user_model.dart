@@ -128,7 +128,7 @@ class MembershipEntry {
   /// Pure date check — whether "now" falls within this entry's scheduled
   /// window. Used only by the scheduled rollover job to decide status
   /// transitions; never used for credit/access gating (status is
-  /// authoritative there, see [UserModel.activeMembership]).
+  /// authoritative there, see [UserModel.activeMemberships]).
   bool get isDateWindowOpen =>
       !startDate.isAfter(DateTime.now()) && endDate.isAfter(DateTime.now());
 }
@@ -171,28 +171,37 @@ class UserModel {
     return adminPermissions.contains(permission);
   }
 
-  // At most one membership entry is ever status=='active' (an invariant
-  // maintained by the purchase flow, credit deduction, and the daily
-  // rollover job) — so this is just a lookup, not a date comparison.
-  MembershipEntry? get activeMembership {
-    for (final m in memberships) {
-      if (m.isActive) return m;
+  /// At most one membership entry is ever `active` *per distinct planName*
+  /// (an invariant maintained by the purchase flow, credit deduction, and
+  /// the daily rollover job, each scoped to a single plan's own chain) —
+  /// but a user can hold several different plans concurrently, each with
+  /// its own active entry. So this is a list, not a single lookup.
+  List<MembershipEntry> get activeMemberships =>
+      memberships.where((m) => m.isActive).toList();
+
+  /// The active entry for a specific plan, if the user holds one.
+  MembershipEntry? activeMembershipFor(String planName) {
+    for (final m in activeMemberships) {
+      if (m.planName == planName) return m;
     }
     return null;
   }
 
-  /// Plans purchased while another plan was still active — queued to
-  /// activate once their predecessor's date window ends (or pulled forward
-  /// early if the active plan runs out of credits first).
+  /// Plans purchased while another entry of the *same* plan was still
+  /// active — queued to activate once their predecessor's date window ends
+  /// (or pulled forward early if the active entry runs out of credits
+  /// first). Different plans never queue behind each other.
   List<MembershipEntry> get queuedMemberships {
     final queued = memberships.where((m) => m.isQueued).toList();
     queued.sort((a, b) => a.startDate.compareTo(b.startDate));
     return queued;
   }
 
-  /// Credits usable right now: the active plan's remaining bucket plus any
-  /// admin-granted pool. Queued plans' credits aren't usable yet.
-  int get totalUsableCredits => (activeMembership?.creditsRemaining ?? 0) + credits;
+  /// Credits usable right now: every active plan's remaining bucket, summed,
+  /// plus any admin-granted pool. Queued plans' credits aren't usable yet.
+  int get totalUsableCredits =>
+      activeMemberships.fold(0, (total, m) => total + m.creditsRemaining) +
+      credits;
 
   /// The active admin-granted credit award, if any.
   AdminCreditGrant? get activeAdminGrant =>

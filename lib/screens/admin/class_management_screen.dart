@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import '../../models/class_model.dart';
+import '../../models/membership_plan_model.dart';
 import '../../models/user_model.dart';
 import '../../services/class_service.dart';
+import '../../services/membership_plan_service.dart';
 import '../../services/notifications.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
@@ -286,6 +288,8 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
   List<Map<String, dynamic>> _types = [];
   List<UserModel> _coaches = [];
   Map<String, String> _typeImages = {};
+  List<MembershipPlanModel> _plans = [];
+  late Set<String> _selectedPlanNames;
 
   static const _weekdayOrder = [
     'Monday', 'Tuesday', 'Wednesday', 'Thursday',
@@ -306,6 +310,7 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
     _isActive = e?.isActive ?? true;
     _selectedFacilityId = e?.facilityId;
     _selectedCoach = e?.coach.isNotEmpty == true ? e!.coach : null;
+    _selectedPlanNames = Set.of(e?.allowedPlanNames ?? const []);
     if (e != null && e.day.isNotEmpty) {
       final parsed = e.day
           .split(',')
@@ -424,11 +429,13 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
         ClassService.getFacilities(),
         ClassService.getClassTypes(),
         ClassService.getCoaches(),
+        MembershipPlanService.getActivePlans(),
       ]);
       if (!mounted) return;
       final facilities = results[0] as List<Map<String, dynamic>>;
       final types = results[1] as List<Map<String, dynamic>>;
       final coaches = results[2] as List<UserModel>;
+      final plans = results[3] as List<MembershipPlanModel>;
 
       final typeImages = Map.fromEntries(
         types.map((t) => MapEntry(
@@ -453,6 +460,7 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
         _coaches = coaches;
         _typeImages = typeImages;
         _type = initialType;
+        _plans = plans;
         _loadingData = false;
       });
     } catch (_) {
@@ -536,6 +544,7 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
       isActive: _isActive,
       occurrence: _occurrence,
       specificDate: specificDateStr,
+      allowedPlanNames: _selectedPlanNames.toList(),
     );
 
     try {
@@ -576,13 +585,19 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
           : Form(
               key: _formKey,
               child: ListView(
-                padding: const EdgeInsets.all(16),
+                // Extra bottom inset so the final button never renders
+                // under the system nav/gesture bar on edge-to-edge Android
+                // — a plain ListView body isn't safe-area-aware by default.
+                padding: EdgeInsets.fromLTRB(
+                    16, 16, 16, 16 + MediaQuery.of(context).padding.bottom),
                 children: [
                   _field(_mode, 'Class Name', required: true),
                   const SizedBox(height: 12),
                   _field(_description, 'Description', maxLines: 3),
                   const SizedBox(height: 12),
                   _typeDropdown(),
+                  const SizedBox(height: 12),
+                  _planWhitelist(),
                   const SizedBox(height: 12),
                   _coachDropdown(),
                   const SizedBox(height: 12),
@@ -720,6 +735,71 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
       onChanged: (v) => setState(() => _type = v ?? _type),
       validator: (v) =>
           (v == null || v.isEmpty) ? 'Select a type' : null,
+    );
+  }
+
+  /// Which membership plans can book this class. Empty selection means
+  /// unrestricted — any plan (or the admin-granted credit pool) works,
+  /// same as every class behaves today.
+  Widget _planWhitelist() {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        border: Border.all(color: AppColors.divider),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Allowed Membership Plans',
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textSecondary)),
+          const SizedBox(height: 4),
+          const Text(
+              'Leave all unchecked to allow any plan (unrestricted, the default).',
+              style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+          if (_plans.isEmpty)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Text('No membership plans found.',
+                  style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: SizedBox(
+                height: 220,
+                child: Scrollbar(
+                  thumbVisibility: true,
+                  child: ListView.builder(
+                    itemCount: _plans.length,
+                    itemBuilder: (_, i) {
+                      final p = _plans[i];
+                      return CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        value: _selectedPlanNames.contains(p.name),
+                        activeColor: AppColors.primary,
+                        title: Text(p.name,
+                            style: const TextStyle(
+                                fontSize: 13, color: AppColors.textPrimary)),
+                        onChanged: (checked) => setState(() {
+                          if (checked == true) {
+                            _selectedPlanNames.add(p.name);
+                          } else {
+                            _selectedPlanNames.remove(p.name);
+                          }
+                        }),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 
