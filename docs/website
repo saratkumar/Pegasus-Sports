@@ -1,0 +1,79 @@
+# Website presence: client purchase widget (GoDaddy embed) + admin CRUD web panel
+
+## Context
+
+The studio wants two things on the web, both new (the prior "webapp plugin" plan from 2 weeks ago only covered the first, and predates this session's membership-chain rework):
+
+1. **Client-facing**: browse membership plans and buy one (Stripe or coupon), embedded as a `<iframe>` "plugin" into the existing GoDaddy site — same server-enforced purchase workflow the Flutter app already uses.
+2. **Admin-facing**: CRUD for Classes, Facilities, Class Types, Membership Plans, Cancel Classes, and Appointment Slots — used directly by studio staff (not embedded anywhere).
+
+These have very different constraints — the client widget must be small and fast (it's loaded inside someone else's page), the admin panel is an internal tool loaded once per staff session where load size doesn't matter but correctness of 6 nontrivial CRUD forms (recurrence rules, cascading cancellation side-effects, checkbox whitelists) does. That drives two different builds sharing the same Firebase backend:
+
+- **Client widget** → new lightweight **Vite + vanilla JS** app (`web-widget/`), hand-porting only the narrow purchase flow.
+- **Admin panel** → **Flutter Web**, reusing the *existing* admin screens (`class_management_screen.dart`, `facility_management_screen.dart`, `type_management_screen.dart`, `plan_management_screen.dart`, `cancel_classes_screen.dart`, `appointment_management_screen.dart`) completely unmodified behind a new minimal web-only entrypoint. This avoids re-implementing the class cancellation cascade (multi-collection: bookings, waitingList, refunds, emails, activity log — see `lib/services/class_cancellation_service.dart`) and the class-form's recurrence/whitelist logic a second time in JS, which would create exactly the kind of "two copies that drift out of sync" problem already flagged as a known pain point in this codebase (`functions/index.js:75-76`'s comment about `buildQueuedOrActiveMembership` needing to stay in sync with its Dart twin).
+
+Both deploy to **Firebase Hosting**, as two separate sites under the same project (`fitness-booking-app-23bdc`) via Hosting targets — independent deploys, no output-directory collisions. Confirmed via research: **no Firestore rules changes needed for either** — every collection involved (`membershipPlans`, `coupons`, `users`, `transactions`, `classes`, `facilities`, `classTypes`, `appointmentSlots`, `bookings`, `waitingList`, `sessionLogs`) is already scoped by `request.auth`/role, not platform (`firestore.rules:23-25` `isAdmin()`, and per-collection rules at lines 110-149, 192-212).
+
+## Part A — Client purchase widget (public, iframe-embedded)
+
+New folder `web-widget/` (Vite + vanilla JS + Firebase JS SDK v9 modular + Stripe.js), reusing the Firebase **Web app already registered** (`lib/firebase_options.dart:43-51`, appId `1:100021036305:web:e4f9d3a3509a31cf1298b0`) — no new Firebase app registration needed.
+
+```
+web-widget/
+  src/
+    firebase.js    # initializeApp with the same web config as firebase_options.dart
+    auth.js        # Google Sign-In + Apple Sign-In, upsertUser()
+    plans.js        # membershipPlans query + render (grouped by category)
+    checkout.js     # coupon check, Stripe Elements, purchase
+    styles.css      # PSAS palette (see lib/utils/app_colors.dart)
+```
+
+**Important simplification vs. the 2-week-old plan**: membership creation is now **fully server-owned**. Confirmed via this session's changes — `UserService.purchaseMembership` (the client-side queue-chain logic) is no longer called by the Stripe/coupon checkout path at all; it's only used by admin-manual flows (cash/QR payment). For Stripe and coupon purchases, `functions/index.js`'s `confirmMembershipPayment` and `redeemFreeMembership` build the membership entry themselves via `buildQueuedOrActiveMembership` (per-plan-name chain logic, `index.js:82-112`). So `checkout.js` **never needs to replicate the queue/chain logic** — it just calls the Cloud Functions and trusts their result, which is simpler than the old plan assumed.
+
+1. **Auth** (`auth.js`): `signInWithPopup` with `GoogleAuthProvider` and `OAuthProvider('apple.com')`. On success, port `_upsertUserAndFinish` (`lib/screens/login/login_screen.dart:116-165`) — create `users/{uid}` on first login (`email`, `name`, `photoUrl`, `role:'client'`, `credits:0`, `memberships:[]`; skip invitation-consumption and super-admin bootstrap, both irrelevant to a public widget) since `confirmMembershipPayment`/`redeemFreeMembership` assume the doc exists. **Apple Sign-In needs manual Apple Developer Portal setup** (Services ID + return URL for both the Hosting domain and the GoDaddy embed domain) — a pre-flight step, not code.
+2. **Plans** (`plans.js`): port `MembershipPlanService.getActivePlans()` (`lib/services/membership_plan_service.dart:16-22`) — query `membershipPlans` ordered by `order`, filter `isActive` client-side. Render grouped by `category`.
+3. **Checkout** (`checkout.js`): port `_purchase()` (`lib/screens/memberships/memberships_screen.dart:51-176`):
+   - Coupon input → client-side pre-check mirroring `CouponService.validate` (`coupon_service.dart:37-49`) for UI feedback only — real enforcement is server-side.
+   - Paid path: `createPaymentIntent` (region **`asia-southeast1`**, must use `getFunctions(app,'asia-southeast1')` — see `lib/services/payment_service.dart:14-15`) → mount Stripe.js Payment Element with the same `pk_test_...` key (`payment_service.dart:9`) → on confirm, call `confirmMembershipPayment({paymentIntentId, planName, credits, validityDays})` → if a coupon was used, call the coupon-redemption increment (mirrors `CouponService.redeem`, `coupon_service.dart:53-64`).
+   - Free (100%-off coupon) path: call `redeemFreeMembership({planName, credits, validityDays, couponCode})` directly — no Stripe.
+   - After either path: write a `transactions` doc matching the shape at `memberships_screen.dart:113-127` (this is what the admin UI reads — skipping it makes web purchases invisible to admins).
+   - **Out of scope for this pass** (matches old plan): PDF invoice email / Google Sheet mirror (`InvoiceService.processWithInvoice`) — already best-effort/non-blocking in the app, flag as fast-follow.
+   - Skip the QR-payment option entirely (admin-manual-confirmation flow, not meaningful for an unattended public widget).
+4. **Hosting + embed**: build (`npm run build`) → deploy to a dedicated Hosting site (`firebase hosting:sites:create psas-shop`, target-mapped as `shop`) → embed via:
+   ```html
+   <iframe src="https://psas-shop.web.app" style="width:100%;max-width:480px;height:720px;border:0;" loading="lazy"></iframe>
+   ```
+5. **Known risk, not a blocker**: Firebase Auth inside a cross-origin iframe can hit browser storage partitioning (Safari ITP) — visitors may need to re-sign-in more often than in the native app. Call out during verification, don't engineer around it up front.
+
+## Part B — Admin CRUD panel (internal, Flutter Web)
+
+New minimal entrypoint, **no changes to any existing admin screen** — they're reused exactly as-is.
+
+- `lib/main_admin_web.dart`: mirrors `lib/main.dart`'s init but trimmed — `Firebase.initializeApp` only (skip `NotificationService.initialize()` and `DeepLinkService`, both mobile-only concerns irrelevant to a desktop admin tool). Runs a new `AdminWebApp`.
+- `lib/web_admin/admin_web_app.dart`: `MaterialApp` reusing the same `ThemeData` block from `main.dart:108-211` (copy, don't share — keeps this file self-contained) with `home:` an auth-gate:
+  - Not signed in → a minimal "Sign in with Google" screen (`signInWithProvider(GoogleAuthProvider())` — Google only, no Apple; matches how the mobile *admin* role already authenticates, no existing Apple-admin precedent).
+  - Signed in but `UserModel.isAdmin` false (same check as `lib/models/user_model.dart:166`, via `UserService.currentUserStream()` same as `main.dart:221-230`) → "Not authorized" message, sign-out button.
+  - Signed in and admin → `AdminWebShell`: a simple `Scaffold` with a `NavigationRail` (desktop-appropriate, unlike the mobile app's bottom `NavigationBar`) listing the 6 sections, each pushing the **existing, unmodified** screen widget: `ClassManagementScreen()`, `FacilityManagementScreen()`, `TypeManagementScreen()`, `PlanManagementScreen()`, `CancelClassesScreen()`, `AppointmentManagementScreen()`.
+- **Accepted cosmetic tradeoff**: these screens were built for phone-width layouts; on a wide desktop browser they'll render narrow/left-aligned rather than filling the window. Acceptable for an initial internal tool — wrap in a centered `ConstrainedBox(maxWidth: 480)` if it looks bad, as a cheap follow-up, not a blocker for v1.
+- **Compatibility spike required before committing to this approach**: `flutter build web` needs to compile cleanly with these screens' full dependency graph. The riskiest transitive imports are mobile-oriented plugins (`flutter_local_notifications` via `class_management_screen.dart`'s `NotificationService.showTrainerRemoved`/`showTrainerAssigned` calls, `flutter_stripe`, `path_provider`, `share_plus`, `pdf`, `app_links`) — most have web-federated implementations in current versions, but this must be verified by actually running the build (first step of implementation, not assumed).
+- Hosting: `flutter build web --target=lib/main_admin_web.dart` → `build/web` → deploy to a second dedicated Hosting site (`firebase hosting:sites:create psas-admin`, target `admin`) → staff visit `https://psas-admin.web.app` directly (never embedded).
+
+## Hosting config (both)
+
+`firebase.json` gets a `"hosting"` array with two target-mapped entries:
+```json
+"hosting": [
+  { "target": "shop", "public": "web-widget/dist", "ignore": ["firebase.json", "**/.*"] },
+  { "target": "admin", "public": "build/web", "ignore": ["firebase.json", "**/.*"] }
+]
+```
+Requires `firebase target:apply hosting shop psas-shop` and `firebase target:apply hosting admin psas-admin` once (maps target names to the two new Hosting sites created above), then `firebase deploy --only hosting:shop` / `hosting:admin` independently.
+
+## Verification
+
+1. **Admin panel spike first**: `flutter build web --target=lib/main_admin_web.dart --release` — confirm it compiles before writing the nav shell. If any plugin fails to compile for web, resolve (usually a version bump or a conditional import) before proceeding.
+2. Admin panel: sign in as a non-admin → confirm "Not authorized". Sign in as admin → exercise each of the 6 sections' create/edit/delete against the real `fitness-booking-app-23bdc` project; specifically verify "Cancel a Session" actually refunds credits and queues a cancellation email (check the `mail` collection, same REST-inspection technique used earlier this session).
+3. Client widget: `cd web-widget && npm install && npm run dev` — sign in with a real Google account, confirm plans render from live `membershipPlans`.
+4. Buy a plan with Stripe test card `4242 4242 4242 4242` — confirm `users/{uid}.credits`/`memberships` updated correctly and a `transactions` doc exists.
+5. Create a test coupon via the existing admin Coupons screen (or the new admin panel once built); verify both a partial-discount purchase and a 100%-off (`redeemFreeMembership`) purchase.
+6. `npm run build && firebase deploy --only hosting:shop`, embed the deployed URL in a throwaway local `<iframe>` HTML file, test in Chrome **and Safari** (storage-partitioning risk) before pasting the real snippet into GoDaddy's site editor.
