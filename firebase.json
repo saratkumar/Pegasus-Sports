@@ -39,5 +39,17 @@
   },
   "extensions": {
     "firestore-send-email-yqyu": "firebase/firestore-send-email@0.2.10"
-  }
+  },
+  "hosting": [
+    {
+      "target": "shop",
+      "public": "web-widget/dist",
+      "ignore": ["firebase.json", "**/.*"]
+    },
+    {
+      "target": "admin",
+      "public": "build/web",
+      "ignore": ["firebase.json", "**/.*"]
+    }
+  ]
 }

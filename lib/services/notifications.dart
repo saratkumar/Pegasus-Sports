@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest_all.dart' as tz_data;
@@ -49,6 +50,11 @@ class NotificationService {
   );
 
   static Future<void> showTrainerAssigned(String className, String date) async {
+    // flutter_local_notifications has no web implementation — its calls
+    // throw UnimplementedError there, which surfaces as a false "failed"
+    // toast in class_management_screen.dart even though the underlying
+    // class update already succeeded. No-op on web instead.
+    if (kIsWeb) return;
     await notifications.show(
       DateTime.now().millisecondsSinceEpoch.remainder(100000),
       'Session Assigned to You',
@@ -58,6 +64,7 @@ class NotificationService {
   }
 
   static Future<void> showTrainerRemoved(String className) async {
+    if (kIsWeb) return;
     await notifications.show(
       DateTime.now().millisecondsSinceEpoch.remainder(100000),
       'Session Reassigned',
