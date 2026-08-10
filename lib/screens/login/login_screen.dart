@@ -23,12 +23,6 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   bool _loading = false;
 
-  // Emails that always get super_admin on first login.
-  // Remove or clear this list when going to production.
-  static const _superAdminEmails = <String>[
-    'admin.psas@gmail.com',
-  ];
-
   Future<void> _signInWithGoogle() async {
     setState(() => _loading = true);
     try {
@@ -126,14 +120,13 @@ class _LoginScreenState extends State<LoginScreen> {
     final existing = await userRef.get();
 
     if (!existing.exists) {
-      // Check for an admin-created invitation for this email
+      // Check for an admin-created invitation for this email — role
+      // (including 'admin'/adminLevel) comes entirely from Firestore data,
+      // never from a hardcoded email list.
       final invite = await UserService.consumeInvitation(email);
-      final isSuperAdmin = _superAdminEmails.contains(email);
 
-      final role =
-          isSuperAdmin ? 'admin' : (invite?['role'] as String? ?? 'client');
-      final adminLevel =
-          isSuperAdmin ? 'super_admin' : (invite?['adminLevel'] as String?);
+      final role = invite?['role'] as String? ?? 'client';
+      final adminLevel = invite?['adminLevel'] as String?;
 
       await userRef.set({
         'email': email,
@@ -146,20 +139,16 @@ class _LoginScreenState extends State<LoginScreen> {
         'role': role,
         if (adminLevel != null) 'adminLevel': adminLevel,
         'adminPermissions': <String>[],
-        'credits':
-            isSuperAdmin ? 0 : (invite?['initialCredits'] as int? ?? 0),
+        'credits': invite?['initialCredits'] as int? ?? 0,
         'memberships': <Map<String, dynamic>>[],
       });
     } else {
-      // Update mutable profile fields; preserve role/credits.
-      // Always enforce super_admin for designated emails.
-      final isSuperAdmin = _superAdminEmails.contains(email);
+      // Update mutable profile fields only; role/adminLevel/credits are
+      // preserved as-is — Firestore is the sole source of truth for them.
       await userRef.set({
         'email': email,
         if (name.isNotEmpty) 'name': name,
         if (photoUrl.isNotEmpty) 'photoUrl': photoUrl,
-        if (isSuperAdmin) 'role': 'admin',
-        if (isSuperAdmin) 'adminLevel': 'super_admin',
       }, SetOptions(merge: true));
     }
   }

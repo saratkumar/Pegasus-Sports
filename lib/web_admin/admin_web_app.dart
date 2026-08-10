@@ -165,7 +165,10 @@ class _SignInScreenState extends State<_SignInScreen> {
       _error = null;
     });
     try {
-      await FirebaseAuth.instance.signInWithProvider(GoogleAuthProvider());
+      // firebase_auth_web only implements signInWithPopup/signInWithRedirect
+      // for provider sign-in — signInWithProvider (the cross-platform
+      // convenience method) throws UnimplementedError on web.
+      await FirebaseAuth.instance.signInWithPopup(GoogleAuthProvider());
     } catch (e) {
       setState(() => _error = e.toString());
     }
