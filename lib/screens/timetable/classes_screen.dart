@@ -5,8 +5,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
 import '../../models/class_model.dart';
+import '../../services/booking_service.dart';
 import '../../services/class_service.dart';
-import '../../services/config_service.dart';
 import '../../services/user_service.dart';
 import '../../services/waiting_list_service.dart';
 import '../../services/email_service.dart';
@@ -98,157 +98,79 @@ class _ClassesScreenState extends State<ClassesScreen> {
   /// whitelist (the default) is unrestricted, same as every class today. An
   /// active admin-granted credit award (see [UserModel.hasUnrestrictedAccess])
   /// always bypasses this gate, independent of whatever plan(s) the user
-  /// actually holds.
-  Future<bool> _canBookClass(ClassModel cls, String uid) async {
-    if (cls.allowedPlanNames.isEmpty) return true;
-    final user = await UserService.getUser(uid);
-    if (user == null) return false;
-    if (user.hasUnrestrictedAccess) return true;
-    // Defensive endDate re-check, same reasoning as UserService's
-    // credit-deduction/purchase-queueing logic: `status` can lag up to a
-    // day behind the calendar if the nightly rollover hasn't run yet.
-    // Queued entries also count — they're eligible for pull-forward by
-    // UserService.deductCredit even before their date window opens.
-    final now = DateTime.now();
-    return user.memberships.any((m) =>
-        cls.allowedPlanNames.contains(m.planName) &&
-        ((m.isActive && m.endDate.isAfter(now)) || m.isQueued));
-  }
+  /// actually holds. Delegates to [BookingService.canBookClass] — kept as a
+  /// thin wrapper here since [_ClassCard]/[_CapacitySection] call it too.
+  Future<bool> _canBookClass(ClassModel cls, String uid) =>
+      BookingService.canBookClass(cls, uid);
 
   Future<void> _book(BuildContext context, ClassModel cls) async {
     final uid = FirebaseAuth.instance.currentUser!.uid;
-    final classId = cls.effectiveId;
 
-    try {
-      // Duplicate check — no date range in Firestore to avoid composite index; filter in Dart
-      final existingSnap = await FirebaseFirestore.instance
-          .collection('bookings')
-          .where('userId', isEqualTo: uid)
-          .where('classId', isEqualTo: classId)
-          .get();
+    final result = await BookingService.bookClass(
+      cls: cls,
+      date: _selectedDate,
+      targetUid: uid,
+      bookedByUid: uid,
+      bookedByRole: 'client',
+      targetUserName: FirebaseAuth.instance.currentUser?.displayName ?? uid,
+    );
 
-      final alreadyBooked = existingSnap.docs.any((d) {
-        final bd = d['bookingDate'];
-        if (bd == null) return false;
-        final dt = (bd as Timestamp).toDate();
-        return dt.year == _selectedDate.year &&
-            dt.month == _selectedDate.month &&
-            dt.day == _selectedDate.day;
-      });
-
-      if (alreadyBooked) {
-        if (context.mounted) {
+    if (!result.success) {
+      if (!context.mounted) return;
+      switch (result.reason!) {
+        case BookingFailureReason.alreadyBooked:
           AppToast.warning(context, "Already registered for ${cls.mode}");
-        }
-        return;
-      }
-
-      if (!await _canBookClass(cls, uid)) {
-        if (context.mounted) {
+          break;
+        case BookingFailureReason.planNotAllowed:
           AppToast.error(context,
               "Your current plan doesn't cover ${cls.mode} — purchase an eligible plan to book it");
-        }
-        return;
-      }
-
-      // Credit check + capacity check in parallel
-      final results = await Future.wait([
-        UserService.hasEnoughCredits(uid,
-            allowedPlanNames: cls.allowedPlanNames),
-        ClassService.getBookingCount(classId, _selectedDate),
-      ]);
-
-      final hasCredits = results[0] as bool;
-      final booked = results[1] as int;
-
-      if (!hasCredits) {
-        if (context.mounted) {
+          break;
+        case BookingFailureReason.noCredits:
           AppToast.error(
               context, "No credits — purchase a membership plan first");
-        }
-        return;
-      }
-
-      final capacity = cls.effectiveCapacity(_selectedDate);
-      if (capacity > 0 && booked >= capacity) {
-        if (context.mounted) {
+          break;
+        case BookingFailureReason.classFull:
           AppToast.error(context, "Class is full");
-        }
-        return;
+          break;
+        case BookingFailureReason.unknown:
+          AppToast.error(
+              context, 'Booking failed: ${result.errorDetail ?? ''}');
+          break;
       }
+      return;
+    }
 
-      // Create booking + deduct credit atomically — a booking is never left
-      // orphaned without its credit actually being deducted, or vice versa.
-      final bookingRef = FirebaseFirestore.instance.collection('bookings').doc();
-      await UserService.deductCreditAndWrite(uid, (tx, sourceEntryId) {
-        tx.set(bookingRef, {
-          'userId': uid,
-          'classId': classId,
-          'displayName': cls.mode,
-          'bookingType': 'class',
-          'bookingDay': _selectedDayName,
-          'bookingDate': Timestamp.fromDate(_selectedDate),
-          'bookingTime': cls.startTime,
-          'createdAt': Timestamp.now(),
-          'bookedBy': uid,
-          'bookedByRole': 'client',
-          'creditsUsed': 1,
-          'creditSourceEntryId': sourceEntryId,
-        });
-      }, allowedPlanNames: cls.allowedPlanNames);
+    final userDoc =
+        await FirebaseFirestore.instance.collection('users').doc(uid).get();
+    final email = FirebaseAuth.instance.currentUser?.email?.isNotEmpty == true
+        ? FirebaseAuth.instance.currentUser!.email!
+        : (userDoc.data()?['email']?.toString() ?? '');
 
-      unawaited(ConfigService.logActivityEvent(
-        eventType: 'Booked',
-        classId: classId,
-        className: cls.mode,
-        sessionDate: _selectedDate,
-        sessionTime: cls.startTime,
-        userId: uid,
-        userName: FirebaseAuth.instance.currentUser?.displayName ?? uid,
-        bookedByRole: 'client',
-        bookingId: bookingRef.id,
-      ));
-
-      final userDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .get();
-      final email =
-          FirebaseAuth.instance.currentUser?.email?.isNotEmpty == true
-              ? FirebaseAuth.instance.currentUser!.email!
-              : (userDoc.data()?['email']?.toString() ?? '');
-
-      if (email.isNotEmpty) {
-        try {
-          await EmailService.sendBookingEmail(
-            email: email,
-            className: cls.mode,
-            classTime: cls.startTime,
-            classDate: _selectedDate,
-            location: cls.location,
-          );
-        } catch (e) {
-          debugPrint('Booking email failed: $e');
-          if (context.mounted) {
-            AppToast.warning(
-                context, 'Booked, but confirmation email failed: $e');
-          }
+    if (email.isNotEmpty) {
+      try {
+        await EmailService.sendBookingEmail(
+          email: email,
+          className: cls.mode,
+          classTime: cls.startTime,
+          classDate: _selectedDate,
+          location: cls.location,
+        );
+      } catch (e) {
+        debugPrint('Booking email failed: $e');
+        if (context.mounted) {
+          AppToast.warning(
+              context, 'Booked, but confirmation email failed: $e');
         }
       }
+    }
 
-      await NotificationService.showBookingConfirmed(cls.mode);
-      await NotificationService.scheduleClassNotifications(
-          cls.mode, _selectedDate, cls.startTime);
+    await NotificationService.showBookingConfirmed(cls.mode);
+    await NotificationService.scheduleClassNotifications(
+        cls.mode, _selectedDate, cls.startTime);
 
-      if (context.mounted) {
-        AppToast.success(
-            context, '${cls.mode} booked for ${_formatDate(_selectedDate)}');
-      }
-    } catch (e, st) {
-      debugPrint('Booking error: $e\n$st');
-      if (context.mounted) {
-        AppToast.error(context, 'Booking failed: ${e.toString()}');
-      }
+    if (context.mounted) {
+      AppToast.success(
+          context, '${cls.mode} booked for ${_formatDate(_selectedDate)}');
     }
   }
 
