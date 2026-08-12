@@ -1,6 +1,14 @@
 {
   "projects": {},
-  "targets": {},
+  "targets": {
+    "fitness-booking-app-23bdc": {
+      "hosting": {
+        "admin": [
+          "psas-admin"
+        ]
+      }
+    }
+  },
   "etags": {
     "fitness-booking-app-23bdc": {
       "extensionInstances": {
