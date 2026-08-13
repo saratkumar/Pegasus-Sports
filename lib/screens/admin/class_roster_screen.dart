@@ -52,7 +52,16 @@ class _ClassRosterScreenState extends State<ClassRosterScreen> {
   @override
   void initState() {
     super.initState();
-    _loadClasses();
+    _init();
+  }
+
+  // _load() seeds its scheduled-classes list from _allClasses (see
+  // _buildRoster), so it must not run until that's populated — otherwise
+  // the very first load races _loadClasses() and sees an empty list,
+  // wrongly showing "0 scheduled" until the day is re-selected.
+  Future<void> _init() async {
+    await _loadClasses();
+    if (!mounted) return;
     _load();
   }
 
@@ -341,7 +350,12 @@ class _ClassRosterScreenState extends State<ClassRosterScreen> {
           else
             Expanded(
               child: ListView.separated(
-                padding: const EdgeInsets.all(14),
+                // Extra bottom inset so the last card never sits flush
+                // against the browser/device's own bottom chrome — a plain
+                // ListView isn't safe-area-aware by default (same pattern
+                // used in class_management_screen.dart's form).
+                padding: EdgeInsets.fromLTRB(
+                    14, 14, 14, 14 + MediaQuery.of(context).padding.bottom + 24),
                 itemCount: _groups.length,
                 separatorBuilder: (_, __) => const SizedBox(height: 8),
                 itemBuilder: (context, i) => _GroupCard(
