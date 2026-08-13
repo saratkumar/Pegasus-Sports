@@ -26,6 +26,14 @@
   <meta name="apple-mobile-web-app-title" content="fitness_booking">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
+  <!-- Required by the google_sign_in_web plugin (login_screen.dart's
+       Google button) — without this, GoogleSignIn().signIn() on web has no
+       client ID to fall back to and throws a null-check error in release
+       builds (the debug-only assert that would explain it gets stripped).
+       Value is the "Web client (Auto created by Google Service)" OAuth
+       client from android/app/google-services.json (client_type: 3). -->
+  <meta name="google-signin-client_id" content="100021036305-a5kic50251dh99t0ti77duprrivac2m4.apps.googleusercontent.com">
+
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
