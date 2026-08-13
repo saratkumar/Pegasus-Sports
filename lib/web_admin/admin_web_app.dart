@@ -167,7 +167,10 @@ class _SignInScreenState extends State<_SignInScreen> {
       _error = null;
     });
     try {
-      await FirebaseAuth.instance.signInWithProvider(GoogleAuthProvider());
+      // signInWithProvider() is native-only (mobile/desktop) — it's a stub
+      // on firebase_auth_web that always throws UnimplementedError. The web
+      // equivalent for a popup-based OAuth flow is signInWithPopup().
+      await FirebaseAuth.instance.signInWithPopup(GoogleAuthProvider());
     } catch (e) {
       setState(() => _error = e.toString());
     }
