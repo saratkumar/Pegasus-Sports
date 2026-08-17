@@ -50,9 +50,10 @@ workflows:
         script: keychain initialize
       - name: Fetch signing files
         script: |
+          echo "$CERTIFICATE_PRIVATE_KEY_B64" | base64 --decode > /tmp/certificate_key.pem
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
-            --certificate-key "$CERTIFICATE_PRIVATE_KEY" \
+            --certificate-key "$(cat /tmp/certificate_key.pem)" \
             --create
       - name: Set up code signing settings on Xcode project
         script: xcode-project use-profiles
