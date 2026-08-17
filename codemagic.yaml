@@ -33,6 +33,8 @@ workflows:
     integrations:
       app_store_connect: codemagic_asc_api_key
     environment:
+      groups:
+        - ios_signing
       flutter: stable
       xcode: latest
       cocoapods: default
@@ -50,7 +52,7 @@ workflows:
         script: |
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
-            --certificate-type DISTRIBUTION \
+            --certificate-key "$CERTIFICATE_PRIVATE_KEY" \
             --create
       - name: Set up code signing settings on Xcode project
         script: xcode-project use-profiles
