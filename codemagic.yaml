@@ -48,13 +48,6 @@ workflows:
           cd ios && pod install
       - name: Set up keychain
         script: keychain initialize
-      - name: Debug cert key var
-        script: |
-          echo "B64 length: ${#CERTIFICATE_PRIVATE_KEY_B64}"
-          echo "$CERTIFICATE_PRIVATE_KEY_B64" | base64 --decode > /tmp/certificate_key.pem
-          echo "Decoded file size: $(wc -c < /tmp/certificate_key.pem)"
-          echo "First line: $(head -1 /tmp/certificate_key.pem)"
-          echo "Last line: $(tail -1 /tmp/certificate_key.pem)"
       - name: Fetch signing files
         script: |
           echo "$CERTIFICATE_PRIVATE_KEY_B64" | base64 --decode > /tmp/certificate_key.pem
