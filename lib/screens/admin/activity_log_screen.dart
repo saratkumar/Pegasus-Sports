@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import '../../models/user_model.dart';
 import '../../services/config_service.dart';
+import '../../services/user_service.dart';
 import '../../utils/app_colors.dart';
 import '../../widgets/timeline_range_selector.dart';
 
@@ -21,6 +23,20 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
   bool _loaded = false;
   List<Map<String, String>> _rows = [];
 
+  UserModel? _selectedUser;
+  List<UserModel> _allUsers = [];
+
+  @override
+  void initState() {
+    super.initState();
+    // Independent of _loading/_loaded (the log's own fetch state) so the
+    // search field is usable immediately, without waiting on a Load tap.
+    UserService.getAllUsers().then((users) {
+      if (!mounted) return;
+      setState(() => _allUsers = users);
+    });
+  }
+
   Future<void> _load() async {
     setState(() {
       _loading = true;
@@ -30,8 +46,11 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
     // class's session date — a booking made today for a future class
     // should show up under today, not the class's date. get_activity_log's
     // server-side `date` filter matches on sessionDate, so that doesn't fit
-    // here; fetch unfiltered and filter client-side on timestamp instead.
-    final all = await ConfigService.getActivityLog();
+    // here; fetch unfiltered (or scoped to the selected user, all-time) and
+    // filter client-side on timestamp instead.
+    final all = _selectedUser != null
+        ? await ConfigService.getActivityLog(userId: _selectedUser!.uid)
+        : await ConfigService.getActivityLog();
     final range = _range ?? defaultDateRange();
     final rows = all.where((r) => isWithinRange(r['timestamp'], range)).toList();
     rows.sort((a, b) => (b['timestamp'] ?? '').compareTo(a['timestamp'] ?? ''));
@@ -79,13 +98,30 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
           Container(
             color: AppColors.bg,
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-            child: DateRangeFilterBar(
-              value: _range,
-              onChanged: (r) => setState(() {
-                _range = r;
-                _loaded = false;
-                _rows = [];
-              }),
+            child: Column(
+              children: [
+                _UserSearchField(
+                  users: _allUsers,
+                  selected: _selectedUser,
+                  onSelected: (u) {
+                    setState(() {
+                      _selectedUser = u;
+                      _loaded = false;
+                      _rows = [];
+                    });
+                    _load();
+                  },
+                ),
+                const SizedBox(height: 10),
+                DateRangeFilterBar(
+                  value: _range,
+                  onChanged: (r) => setState(() {
+                    _range = r;
+                    _loaded = false;
+                    _rows = [];
+                  }),
+                ),
+              ],
             ),
           ),
           Container(
@@ -201,6 +237,143 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
             ),
         ],
       ),
+    );
+  }
+}
+
+// ── User search ──────────────────────────────────────────────────────────────
+
+/// Lets the admin scope the log to one user's all-time history. Collapses to
+/// a chip once a user is picked; shows a filterable list while searching.
+class _UserSearchField extends StatefulWidget {
+  final List<UserModel> users;
+  final UserModel? selected;
+  final ValueChanged<UserModel?> onSelected;
+
+  const _UserSearchField({
+    required this.users,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  @override
+  State<_UserSearchField> createState() => _UserSearchFieldState();
+}
+
+class _UserSearchFieldState extends State<_UserSearchField> {
+  String _query = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = widget.selected;
+    if (selected != null) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: AppColors.card,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.divider),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.person_outline,
+                size: 18, color: AppColors.primary),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(selected.name,
+                      style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary)),
+                  Text(selected.email,
+                      style: const TextStyle(
+                          fontSize: 11, color: AppColors.textSecondary)),
+                ],
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.clear, size: 18, color: AppColors.textMuted),
+              tooltip: 'Clear user filter',
+              onPressed: () => widget.onSelected(null),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final q = _query.trim().toLowerCase();
+    final matches = q.isEmpty
+        ? const <UserModel>[]
+        : widget.users
+            .where((u) =>
+                u.name.toLowerCase().contains(q) ||
+                u.email.toLowerCase().contains(q))
+            .take(20)
+            .toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          onChanged: (v) => setState(() => _query = v),
+          decoration: InputDecoration(
+            hintText: 'Search a user by name or email to filter their history...',
+            hintStyle: const TextStyle(fontSize: 12),
+            prefixIcon: const Icon(Icons.search, size: 18, color: AppColors.textMuted),
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: AppColors.divider)),
+            enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: AppColors.divider)),
+          ),
+        ),
+        if (q.isNotEmpty)
+          Container(
+            margin: const EdgeInsets.only(top: 6),
+            constraints: const BoxConstraints(maxHeight: 220),
+            decoration: BoxDecoration(
+              color: AppColors.card,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppColors.divider),
+            ),
+            child: matches.isEmpty
+                ? const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: Text('No matching users',
+                        style: TextStyle(
+                            fontSize: 12, color: AppColors.textMuted)),
+                  )
+                : Scrollbar(
+                    thumbVisibility: true,
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: matches.length,
+                      itemBuilder: (_, i) {
+                        final u = matches[i];
+                        return ListTile(
+                          dense: true,
+                          title: Text(u.name,
+                              style: const TextStyle(
+                                  fontSize: 13, color: AppColors.textPrimary)),
+                          subtitle: Text(u.email,
+                              style: const TextStyle(
+                                  fontSize: 11, color: AppColors.textSecondary)),
+                          onTap: () {
+                            setState(() => _query = '');
+                            widget.onSelected(u);
+                          },
+                        );
+                      },
+                    ),
+                  ),
+          ),
+      ],
     );
   }
 }

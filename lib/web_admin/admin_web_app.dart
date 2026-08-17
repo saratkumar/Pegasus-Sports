@@ -4,9 +4,11 @@ import 'package:flutter/services.dart';
 import '../models/user_model.dart';
 import '../services/user_service.dart';
 import '../utils/app_colors.dart';
+import '../screens/admin/activity_log_screen.dart';
 import '../screens/admin/appointment_management_screen.dart';
 import '../screens/admin/cancel_classes_screen.dart';
 import '../screens/admin/class_management_screen.dart';
+import '../screens/admin/class_roster_screen.dart';
 import '../screens/admin/facility_management_screen.dart';
 import '../screens/admin/plan_management_screen.dart';
 import '../screens/admin/type_management_screen.dart';
@@ -252,11 +254,13 @@ class _AdminWebShellState extends State<AdminWebShell> {
 
   static const _sections = <(String, IconData, Widget)>[
     ('Classes', Icons.event, ClassManagementScreen()),
+    ('Class Roster', Icons.calendar_view_month, ClassRosterScreen()),
     ('Facilities', Icons.villa_outlined, FacilityManagementScreen()),
     ('Class Types', Icons.category_outlined, TypeManagementScreen()),
     ('Plans', Icons.card_membership_outlined, PlanManagementScreen()),
     ('Cancel Classes', Icons.event_busy_outlined, CancelClassesScreen()),
     ('Appointments', Icons.calendar_month_outlined, AppointmentManagementScreen()),
+    ('Activity Log', Icons.history, ActivityLogScreen()),
   ];
 
   @override

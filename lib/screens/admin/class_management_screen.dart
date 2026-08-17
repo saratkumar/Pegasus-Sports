@@ -738,6 +738,14 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
     );
   }
 
+  /// Tristate reflecting whether none/some/all currently-loaded plans are
+  /// selected — drives the "Select all" checkbox in [_planWhitelist].
+  bool? get _selectAllPlansValue {
+    if (_plans.isEmpty || _selectedPlanNames.isEmpty) return false;
+    if (_plans.every((p) => _selectedPlanNames.contains(p.name))) return true;
+    return null;
+  }
+
   /// Which membership plans can book this class. Empty selection means
   /// unrestricted — any plan (or the admin-granted credit pool) works,
   /// same as every class behaves today.
@@ -766,38 +774,60 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
               child: Text('No membership plans found.',
                   style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
             )
-          else
+          else ...[
             Padding(
               padding: const EdgeInsets.only(top: 4),
-              child: SizedBox(
-                height: 220,
-                child: Scrollbar(
-                  thumbVisibility: true,
-                  child: ListView.builder(
-                    itemCount: _plans.length,
-                    itemBuilder: (_, i) {
-                      final p = _plans[i];
-                      return CheckboxListTile(
-                        contentPadding: EdgeInsets.zero,
-                        dense: true,
-                        value: _selectedPlanNames.contains(p.name),
-                        activeColor: AppColors.primary,
-                        title: Text(p.name,
-                            style: const TextStyle(
-                                fontSize: 13, color: AppColors.textPrimary)),
-                        onChanged: (checked) => setState(() {
-                          if (checked == true) {
-                            _selectedPlanNames.add(p.name);
-                          } else {
-                            _selectedPlanNames.remove(p.name);
-                          }
-                        }),
-                      );
-                    },
+              child: Row(
+                children: [
+                  Checkbox(
+                    tristate: true,
+                    value: _selectAllPlansValue,
+                    activeColor: AppColors.primary,
+                    onChanged: (_) => setState(() {
+                      final allSelected = _plans
+                          .every((p) => _selectedPlanNames.contains(p.name));
+                      _selectedPlanNames = allSelected
+                          ? {}
+                          : _plans.map((p) => p.name).toSet();
+                    }),
                   ),
+                  const Text('Select all',
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textSecondary)),
+                ],
+              ),
+            ),
+            SizedBox(
+              height: 220,
+              child: Scrollbar(
+                thumbVisibility: true,
+                child: ListView.builder(
+                  itemCount: _plans.length,
+                  itemBuilder: (_, i) {
+                    final p = _plans[i];
+                    return CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                      value: _selectedPlanNames.contains(p.name),
+                      activeColor: AppColors.primary,
+                      title: Text(p.name,
+                          style: const TextStyle(
+                              fontSize: 13, color: AppColors.textPrimary)),
+                      onChanged: (checked) => setState(() {
+                        if (checked == true) {
+                          _selectedPlanNames.add(p.name);
+                        } else {
+                          _selectedPlanNames.remove(p.name);
+                        }
+                      }),
+                    );
+                  },
                 ),
               ),
             ),
+          ],
         ],
       ),
     );

@@ -62,6 +62,43 @@ class ClassModel {
   /// Returns true if [date]'s session was cancelled.
   bool isCancelledOn(DateTime date) => cancelledDates.contains(_dateKey(date));
 
+  static const _dayNames = [
+    'Monday', 'Tuesday', 'Wednesday', 'Thursday',
+    'Friday', 'Saturday', 'Sunday',
+  ];
+
+  /// Whether this recurring class has a scheduled occurrence on [date] —
+  /// combines occurrence-type matching (weekly/daily/once/monthly) with
+  /// [isCancelledOn]. Canonical version of matching logic that was
+  /// previously duplicated (with subtle drift) across classes_screen.dart,
+  /// trainer_home_screen.dart, and trainer_history_screen.dart — new call
+  /// sites should use this instead of re-deriving it.
+  bool occursOn(DateTime date) {
+    if (isCancelledOn(date)) return false;
+    final dayName = _dayNames[date.weekday - 1];
+    final classDays = day.split(',').map((d) => d.trim()).toSet();
+    switch (occurrence) {
+      case 'daily':
+        return true;
+      case 'once':
+        return specificDate == _dateKey(date);
+      case 'monthly':
+        if (specificDate == null) {
+          return classDays.contains(dayName) && date.day <= 7;
+        }
+        final parts = specificDate!.split('-');
+        if (parts.length < 3) return false;
+        final ref = DateTime(
+            int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]));
+        final refWeek = ((ref.day - 1) ~/ 7) + 1;
+        final selWeek = ((date.day - 1) ~/ 7) + 1;
+        return classDays.contains(dayName) && selWeek == refWeek;
+      case 'weekly':
+      default:
+        return classDays.contains(dayName);
+    }
+  }
+
   static String _dateKey(DateTime d) =>
       '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
