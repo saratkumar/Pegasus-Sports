@@ -48,6 +48,7 @@ app.*.map.json
 /android/app/release
 
 functions/node_modules
+.firebase/
 
 # Extension configs contain live SMTP credentials in plaintext
 extensions/*.env

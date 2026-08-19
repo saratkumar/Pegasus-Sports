@@ -3,6 +3,9 @@
   "targets": {
     "fitness-booking-app-23bdc": {
       "hosting": {
+        "shop": [
+          "psas-shop"
+        ],
         "admin": [
           "psas-admin"
         ]
