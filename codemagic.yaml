@@ -65,12 +65,6 @@ workflows:
         script: |
           xcode-project use-profiles \
             --custom-export-options '{"signingCertificate": "Apple Distribution"}'
-      - name: Debug export options and keychain identities
-        script: |
-          echo "--- export_options.plist ---"
-          cat /Users/builder/export_options.plist
-          echo "--- identities in keychain ---"
-          security find-identity -v -p codesigning
       - name: Build ipa
         script: flutter build ipa --release --export-options-plist=/Users/builder/export_options.plist
     artifacts:
