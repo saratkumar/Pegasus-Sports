@@ -26,6 +26,18 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>NSCameraUsageDescription</key>
+	<string>Fitness Booking uses your camera to scan your card details for faster and more secure checkout.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Fitness Booking needs access to your photo library to let you select and share images.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Fitness Booking needs permission to save images and documents to your photo library.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Fitness Booking may use your microphone as part of secure payment verification.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Fitness Booking uses Face ID to securely verify your identity when signing in.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
