@@ -60,12 +60,12 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyBcXsX_R2cEVQ1Rfo5t6LZ2p_M_p82D5Nc',
-    appId: '1:100021036305:ios:d99f7bf0e0265f151298b0',
+    appId: '1:100021036305:ios:3f8be1e071ed72141298b0',
     messagingSenderId: '100021036305',
     projectId: 'fitness-booking-app-23bdc',
     storageBucket: 'fitness-booking-app-23bdc.firebasestorage.app',
-    iosClientId: '100021036305-mjnvnpt3m9b6a00ouf9cmb1fi5vuhk9i.apps.googleusercontent.com',
-    iosBundleId: 'com.example.fitnessBooking',
+    iosClientId: '100021036305-40v7eo4nr0b8ss92pq4ikl08egro4ggu.apps.googleusercontent.com',
+    iosBundleId: 'com.psas.booking',
   );
 
   static const FirebaseOptions macos = FirebaseOptions(
