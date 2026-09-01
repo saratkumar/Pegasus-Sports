@@ -51,9 +51,15 @@ class InvoicePdfService {
     String? couponCode,
     double? originalAmount,
     int? validityDays,
+    // Stripe card processing fee, already included in [amount] — null/0 for
+    // QR/cash payments and free (100%-off coupon) purchases, since no card
+    // fee is incurred there.
+    double? feeAmount,
   }) async {
     final now = DateTime.now();
     final dateStr = '${now.day.toString().padLeft(2, '0')} ${_months[now.month]} ${now.year}';
+    final fee = feeAmount ?? 0;
+    final hasFee = fee > 0;
 
     final logoBytes = await rootBundle.load('assets/images/logo.png');
     final logoImage = pw.MemoryImage(logoBytes.buffer.asUint8List());
@@ -175,13 +181,24 @@ class InvoicePdfService {
                   child: pw.Column(
                     children: [
                       _totalRow('Amount before tax', currency, amount),
+                      if (hasFee)
+                        _totalRow('Card processing fee', currency, fee),
                       _totalRow('Tax amount', currency, 0),
                       pw.Divider(color: PdfColors.grey400, height: 10),
-                      _totalRow('Total amount', currency, amount, bold: true),
+                      _totalRow('Total amount', currency, amount + fee,
+                          bold: true),
                     ],
                   ),
                 ),
               ),
+              if (hasFee) ...[
+                pw.SizedBox(height: 6),
+                pw.Text(
+                  'A card processing fee of $currency ${fee.toStringAsFixed(2)} '
+                  'applies to card payments and is included in the total above.',
+                  style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey600),
+                ),
+              ],
               pw.SizedBox(height: 28),
               pw.Text('Payment received in full — thank you, $clientName!',
                   style: const pw.TextStyle(fontSize: 11, color: PdfColors.grey700)),
@@ -252,6 +269,7 @@ class InvoicePdfService {
     String? couponCode,
     double? originalAmount,
     int? validityDays,
+    double? feeAmount,
   }) async {
     final bytes = await buildBytes(
       invoiceNumber: invoiceNumber,
@@ -265,6 +283,7 @@ class InvoicePdfService {
       couponCode: couponCode,
       originalAmount: originalAmount,
       validityDays: validityDays,
+      feeAmount: feeAmount,
     );
     final dir = await getTemporaryDirectory();
     final file = File('${dir.path}/$invoiceNumber.pdf');

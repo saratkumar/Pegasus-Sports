@@ -51,6 +51,9 @@ class InvoiceService {
     String? couponCode,
     double? originalAmount,
     int? validityDays,
+    // Stripe card processing fee — null/0 for QR/cash payments and free
+    // (100%-off coupon) purchases, since no card fee is incurred there.
+    double? feeAmount,
     bool recordToSheet = true,
     bool sendEmail = true,
   }) async {
@@ -98,6 +101,7 @@ class InvoiceService {
             couponCode: couponCode,
             originalAmount: originalAmount,
             validityDays: validityDays,
+            feeAmount: feeAmount,
             date: dateStr,
           );
           emailSent = true;
@@ -153,10 +157,15 @@ class InvoiceService {
     String? couponCode,
     double? originalAmount,
     int? validityDays,
+    double? feeAmount,
     required String date,
   }) async {
     final refLine = (displayPaymentRef != null && displayPaymentRef.isNotEmpty)
         ? '<p>Payment Ref: $displayPaymentRef</p>'
+        : '';
+    final fee = feeAmount ?? 0;
+    final feeLine = fee > 0
+        ? '<p>Card processing fee: $currency ${fee.toStringAsFixed(2)}</p>'
         : '';
     final pdfBytes = await InvoicePdfService.buildBytes(
       invoiceNumber: invoiceNumber,
@@ -170,6 +179,7 @@ class InvoiceService {
       couponCode: couponCode,
       originalAmount: originalAmount,
       validityDays: validityDays,
+      feeAmount: feeAmount,
     );
     await FirebaseFirestore.instance.collection('mail').add({
       'to': [clientEmail],
@@ -181,6 +191,8 @@ class InvoiceService {
             <p>Date: $date</p>
             <p>Plan: $planName ($credits credits)</p>
             <p>Amount: $currency ${amount.toStringAsFixed(2)}</p>
+            $feeLine
+            ${fee > 0 ? '<p><b>Total charged: $currency ${(amount + fee).toStringAsFixed(2)}</b></p>' : ''}
             $refLine
             <p>Your invoice is attached as a PDF.</p>
             <p>Thank you, $clientName.</p>

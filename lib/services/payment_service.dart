@@ -35,13 +35,28 @@ class PaymentService {
   /// Cloud Function — the Stripe secret key never touches the client) →
   /// shows the payment sheet to the user.
   ///
+  /// [netAmount] is the amount the business should actually receive (after
+  /// any coupon discount, before the Stripe card fee); the server grosses it
+  /// up by the fee for [cardRegion]/[cardBrand] (self-declared by the
+  /// customer — see stripe_fee_estimator.dart) and charges that instead, so
+  /// [netAmount] still lands in full after Stripe takes its cut.
+  ///
   /// Throws [StripeException] if user cancels.
   /// Throws on network/Cloud Function errors.
-  /// Returns the Stripe PaymentIntent ID (pi_xxx) on success.
-  static Future<String> processPayment({
+  /// Returns the PaymentIntent ID plus the server-computed, authoritative
+  /// net/fee/gross breakdown (fee math is never trusted from the client).
+  static Future<
+      ({
+        String paymentIntentId,
+        double netAmount,
+        double feeAmount,
+        double grossAmount
+      })> processPayment({
     required String planName,
-    required double amount,
+    required double netAmount,
     required String currency,
+    required String cardRegion,
+    required String cardBrand,
   }) async {
     await _ensureInitialized();
 
@@ -57,9 +72,11 @@ class PaymentService {
     final result = await _functions
         .httpsCallable('createPaymentIntent')
         .call({
-          'amount': amount,
+          'netAmount': netAmount,
           'currency': currency,
           'planName': planName,
+          'cardRegion': cardRegion,
+          'cardBrand': cardBrand,
         })
         .timeout(const Duration(seconds: 20),
             onTimeout: () => throw TimeoutException(
@@ -67,6 +84,9 @@ class PaymentService {
     final data = result.data as Map;
     final clientSecret = data['clientSecret'] as String;
     final paymentIntentId = data['paymentIntentId'] as String;
+    final serverNetAmount = (data['netAmount'] as num).toDouble();
+    final feeAmount = (data['feeAmount'] as num).toDouble();
+    final grossAmount = (data['grossAmount'] as num).toDouble();
 
     FirebaseCrashlytics.instance.log('processPayment: initializing payment sheet');
     await Stripe.instance
@@ -126,7 +146,12 @@ class PaymentService {
             'Stripe sheet may never have rendered'));
     FirebaseCrashlytics.instance.log('processPayment: payment sheet completed');
 
-    return paymentIntentId;
+    return (
+      paymentIntentId: paymentIntentId,
+      netAmount: serverNetAmount,
+      feeAmount: feeAmount,
+      grossAmount: grossAmount,
+    );
   }
 
   /// Overwrites the PaymentIntent's description (initially set to the plan

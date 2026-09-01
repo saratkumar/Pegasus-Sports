@@ -36,31 +36,81 @@ function getStripe() {
   return _stripe;
 }
 
+// ── card processing fee ─────────────────────────────────────────────────────
+// The business should net the full (post-discount) plan price even when the
+// customer pays by card — Stripe deducts its own fee before the money
+// arrives, so the charge itself is grossed up to absorb it. Rates are keyed
+// by card region/brand (self-declared by the customer at checkout — Stripe's
+// PaymentSheet hides the card until after the amount is already fixed, so
+// there's no way to detect it automatically here) so different tiers can be
+// tuned independently later without a code change.
+// MIRRORED in lib/utils/stripe_fee_estimator.dart (client-side preview only —
+// keep the rates and formula identical, or the pre-payment estimate shown to
+// the customer will drift from what they're actually charged here).
+const CARD_FEE_TIERS = {
+  domestic: {
+    visa_mc: { percent: 0.034, fixed: 0.50 },
+    amex: { percent: 0.034, fixed: 0.50 },
+  },
+  international: {
+    visa_mc: { percent: 0.044, fixed: 0.50 },
+    amex: { percent: 0.044, fixed: 0.50 },
+  },
+};
+
+function computeCardFee(netAmount, cardRegion, cardBrand) {
+  const tier = CARD_FEE_TIERS[cardRegion]?.[cardBrand];
+  if (!tier) {
+    throw new HttpsError(
+      "invalid-argument",
+      `Unknown card tier: ${cardRegion}/${cardBrand}`
+    );
+  }
+  // grossAmount * (1 - percent) - fixed = netAmount, solved for grossAmount,
+  // rounded UP to the nearest cent so the net proceeds are never short by a
+  // cent after Stripe's own rounding.
+  const rawGross = (netAmount + tier.fixed) / (1 - tier.percent);
+  const grossAmount = Math.ceil(rawGross * 100) / 100;
+  const feeAmount = Math.round((grossAmount - netAmount) * 100) / 100;
+  return { feeAmount, grossAmount };
+}
+
 // ── createPaymentIntent ───────────────────────────────────────────────────────
 // Called before showing the Stripe payment sheet.
-// Returns { clientSecret, paymentIntentId }
+// Returns { clientSecret, paymentIntentId, netAmount, feeAmount, grossAmount }
 exports.createPaymentIntent = onCall({ secrets: ["STRIPE_SECRET_KEY"] }, async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Must be signed in.");
   }
 
-  const { amount, currency = "sgd", planName } = request.data;
+  const { netAmount, currency = "sgd", planName, cardRegion, cardBrand } = request.data;
 
-  if (!amount || amount <= 0) {
-    throw new HttpsError("invalid-argument", "amount must be a positive number.");
+  if (!netAmount || netAmount <= 0) {
+    throw new HttpsError("invalid-argument", "netAmount must be a positive number.");
   }
   if (!planName) {
     throw new HttpsError("invalid-argument", "planName is required.");
   }
+  if (!cardRegion || !cardBrand) {
+    throw new HttpsError("invalid-argument", "cardRegion and cardBrand are required.");
+  }
+
+  // Fee math happens here, not on the client — the client only declares the
+  // card tier, the server is the sole authority on the resulting charge.
+  const { feeAmount, grossAmount } = computeCardFee(netAmount, cardRegion, cardBrand);
 
   const stripe = getStripe();
   const paymentIntent = await stripe.paymentIntents.create({
-    amount: Math.round(amount * 100), // Stripe uses smallest currency unit (cents)
+    amount: Math.round(grossAmount * 100), // Stripe uses smallest currency unit (cents)
     currency,
     description: planName,
     metadata: {
       userId: request.auth.uid,
       planName,
+      netAmount: netAmount.toFixed(2),
+      feeAmount: feeAmount.toFixed(2),
+      cardRegion,
+      cardBrand,
     },
     automatic_payment_methods: { enabled: true },
   });
@@ -68,6 +118,9 @@ exports.createPaymentIntent = onCall({ secrets: ["STRIPE_SECRET_KEY"] }, async (
   return {
     clientSecret: paymentIntent.client_secret,
     paymentIntentId: paymentIntent.id,
+    netAmount,
+    feeAmount,
+    grossAmount,
   };
 });
 
@@ -164,6 +217,10 @@ exports.confirmMembershipPayment = onCall({ secrets: ["STRIPE_SECRET_KEY"] }, as
       memberships: admin.firestore.FieldValue.arrayUnion(membership),
     });
 
+    // netAmount/feeAmount/cardRegion/cardBrand were set server-side in
+    // createPaymentIntent, so reading them back off the verified
+    // PaymentIntent's metadata is trusted — not client-supplied here.
+    const meta = paymentIntent.metadata || {};
     tx.set(paymentsRef.doc(), {
       userId: uid,
       paymentIntentId,
@@ -173,6 +230,10 @@ exports.confirmMembershipPayment = onCall({ secrets: ["STRIPE_SECRET_KEY"] }, as
       credits,
       status: "succeeded",
       createdAt: admin.firestore.Timestamp.now(),
+      ...(meta.netAmount != null && { netAmount: Number(meta.netAmount) }),
+      ...(meta.feeAmount != null && { feeAmount: Number(meta.feeAmount) }),
+      ...(meta.cardRegion != null && { cardRegion: meta.cardRegion }),
+      ...(meta.cardBrand != null && { cardBrand: meta.cardBrand }),
     });
   });
 

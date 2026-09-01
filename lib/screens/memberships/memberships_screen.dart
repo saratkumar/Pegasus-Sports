@@ -16,6 +16,7 @@ import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
 import '../../utils/error_reporter.dart';
 import '../../utils/plan_category_style.dart';
+import '../../utils/stripe_fee_estimator.dart';
 
 class MembershipScreen extends StatefulWidget {
   const MembershipScreen({super.key});
@@ -43,8 +44,12 @@ class _MembershipScreenState extends State<MembershipScreen> {
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (_) => _CheckoutSheet(
         plan: plan,
-        onConfirm: (coupon, finalAmount) =>
-            _purchase(context, plan, coupon: coupon, finalAmount: finalAmount),
+        onConfirm: (coupon, finalAmount, cardRegion, cardBrand) => _purchase(
+            context, plan,
+            coupon: coupon,
+            finalAmount: finalAmount,
+            cardRegion: cardRegion,
+            cardBrand: cardBrand),
       ),
     );
   }
@@ -54,6 +59,8 @@ class _MembershipScreenState extends State<MembershipScreen> {
     MembershipPlanModel plan, {
     CouponModel? coupon,
     required double finalAmount,
+    required String cardRegion,
+    required String cardBrand,
   }) async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
@@ -61,12 +68,19 @@ class _MembershipScreenState extends State<MembershipScreen> {
 
     try {
       String paymentRef;
+      double? feeAmount;
+      double? grossAmount;
       if (finalAmount > 0) {
-        paymentRef = await PaymentService.processPayment(
+        final payment = await PaymentService.processPayment(
           planName: plan.name,
-          amount: finalAmount,
+          netAmount: finalAmount,
           currency: 'sgd',
+          cardRegion: cardRegion,
+          cardBrand: cardBrand,
         );
+        paymentRef = payment.paymentIntentId;
+        feeAmount = payment.feeAmount;
+        grossAmount = payment.grossAmount;
         // Payment confirmed server-side (verifies with Stripe before
         // activating) — replaces trusting the client's own Firestore write.
         await PaymentService.confirmMembershipPayment(
@@ -124,6 +138,10 @@ class _MembershipScreenState extends State<MembershipScreen> {
         'validityDays': plan.validityDays,
         if (coupon != null) 'couponCode': coupon.code,
         if (coupon != null) 'originalAmount': plan.price,
+        if (feeAmount != null) 'feeAmount': feeAmount,
+        if (grossAmount != null) 'grossAmount': grossAmount,
+        if (feeAmount != null) 'cardRegion': cardRegion,
+        if (feeAmount != null) 'cardBrand': cardBrand,
         'createdAt': FieldValue.serverTimestamp(),
       });
 
@@ -143,6 +161,7 @@ class _MembershipScreenState extends State<MembershipScreen> {
         displayPaymentRef: paymentRef,
         couponCode: coupon?.code,
         originalAmount: coupon != null ? plan.price : null,
+        feeAmount: feeAmount,
         validityDays: plan.validityDays,
       );
       if (sheetRecorded && emailSent) {
@@ -767,7 +786,8 @@ class _PlanCard extends StatelessWidget {
 
 class _CheckoutSheet extends StatefulWidget {
   final MembershipPlanModel plan;
-  final Future<void> Function(CouponModel? coupon, double finalAmount) onConfirm;
+  final Future<void> Function(CouponModel? coupon, double finalAmount,
+      String cardRegion, String cardBrand) onConfirm;
 
   const _CheckoutSheet({required this.plan, required this.onConfirm});
 
@@ -781,6 +801,11 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
   String? _error;
   bool _validating = false;
   bool _processing = false;
+  // Self-declared by the customer — Stripe's PaymentSheet hides the actual
+  // card until after the charge amount is already fixed, so there's no way
+  // to detect these automatically before creating the PaymentIntent.
+  String _cardRegion = 'domestic';
+  String _cardBrand = 'visa_mc';
 
   Future<void> _confirm() async {
     // If the coupon field still has focus, presenting Stripe's native
@@ -791,7 +816,7 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
     FocusScope.of(context).unfocus();
     setState(() => _processing = true);
     await Future.delayed(const Duration(milliseconds: 300));
-    await widget.onConfirm(_appliedCoupon, _finalAmount);
+    await widget.onConfirm(_appliedCoupon, _finalAmount, _cardRegion, _cardBrand);
     if (mounted) Navigator.pop(context);
   }
 
@@ -820,6 +845,15 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
   double get _finalAmount => _appliedCoupon != null
       ? _appliedCoupon!.applyTo(widget.plan.price)
       : widget.plan.price;
+
+  // Preview only — the actual charge is computed and enforced server-side
+  // (see PaymentService.processPayment / functions/index.js
+  // createPaymentIntent) once the customer confirms.
+  ({double feeAmount, double grossAmount}) get _feeEstimate => estimateCardFee(
+        netAmount: _finalAmount,
+        cardRegion: _cardRegion,
+        cardBrand: _cardBrand,
+      );
 
   Future<void> _applyCoupon() async {
     final code = _couponCtrl.text.trim();
@@ -950,6 +984,52 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
               ]),
             ],
           ),
+          if (_finalAmount > 0) ...[
+            const SizedBox(height: 16),
+            const Text('Paying by card',
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary)),
+            const SizedBox(height: 6),
+            _CardTierToggle(
+              options: const {'domestic': 'Singapore-issued', 'international': 'International'},
+              value: _cardRegion,
+              onChanged: (v) => setState(() => _cardRegion = v),
+            ),
+            const SizedBox(height: 6),
+            _CardTierToggle(
+              options: const {'visa_mc': 'Visa / Mastercard', 'amex': 'Amex'},
+              value: _cardBrand,
+              onChanged: (v) => setState(() => _cardBrand = v),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('Card processing fee',
+                    style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                Text('\$${_feeEstimate.feeAmount.toStringAsFixed(2)}',
+                    style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('Total charged to card',
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary)),
+                Text('\$${_feeEstimate.grossAmount.toStringAsFixed(2)}',
+                    style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary)),
+              ],
+            ),
+          ],
           const SizedBox(height: 20),
           SizedBox(
             width: double.infinity,
@@ -978,6 +1058,56 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
         ],
       ),
       ),
+    );
+  }
+}
+
+/// Two/three-way segmented toggle used for the customer's self-declared card
+/// region/brand (see _CheckoutSheetState._cardRegion/_cardBrand) — matches
+/// the visual language of _CategoryBar's chips.
+class _CardTierToggle extends StatelessWidget {
+  final Map<String, String> options;
+  final String value;
+  final ValueChanged<String> onChanged;
+
+  const _CardTierToggle(
+      {required this.options, required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: options.entries.map((e) {
+        final isSelected = e.key == value;
+        return Expanded(
+          child: Padding(
+            padding: EdgeInsets.only(right: e.key != options.keys.last ? 8 : 0),
+            child: GestureDetector(
+              onTap: () => onChanged(e.key),
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? AppColors.primary.withValues(alpha: 0.15)
+                      : AppColors.surface,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: isSelected
+                        ? AppColors.primary.withValues(alpha: 0.5)
+                        : AppColors.divider,
+                  ),
+                ),
+                child: Text(e.value,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                        color: isSelected ? AppColors.primary : AppColors.textSecondary)),
+              ),
+            ),
+          ),
+        );
+      }).toList(),
     );
   }
 }
