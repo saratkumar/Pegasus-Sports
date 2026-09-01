@@ -71,15 +71,14 @@ workflows:
         script: |
           # firebase-tools' `crashlytics:symbols:upload` is for Android/native
           # (breakpad) symbols only — wrong tool for Apple dSYMs. Firebase
-          # ships its own upload-symbols binary as source inside the SPM
-          # package checkout (this project resolves Firebase via Swift
-          # Package Manager, not CocoaPods, so there's no Pods/ directory to
-          # find it in) — locate it there instead.
-          UPLOAD_SYMBOLS=$(find "$HOME/Library/Developer/Xcode/DerivedData" \
-            -path "*/SourcePackages/checkouts/firebase-ios-sdk/Crashlytics/upload-symbols" \
-            2>/dev/null | head -1)
+          # ships its own upload-symbols binary as a resource inside the
+          # FirebaseCrashlytics CocoaPod (this project resolves Firebase via
+          # CocoaPods — see ios/Podfile's flutter_install_all_ios_pods — not
+          # SPM, so it lives under ios/Pods, not DerivedData/SourcePackages).
+          UPLOAD_SYMBOLS=$(find ios/Pods/FirebaseCrashlytics \
+            -name "upload-symbols" 2>/dev/null | head -1)
           if [ -z "$UPLOAD_SYMBOLS" ]; then
-            echo "upload-symbols tool not found in DerivedData — skipping dSYM upload"
+            echo "upload-symbols tool not found in ios/Pods — skipping dSYM upload"
           else
             "$UPLOAD_SYMBOLS" \
               -gsp ios/Runner/GoogleService-Info.plist \
