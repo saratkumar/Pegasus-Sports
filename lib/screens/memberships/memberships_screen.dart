@@ -783,7 +783,14 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
   bool _processing = false;
 
   Future<void> _confirm() async {
+    // If the coupon field still has focus, presenting Stripe's native
+    // PaymentSheet while the keyboard is up/mid-dismiss can leave iOS's
+    // presentPaymentSheet() hanging indefinitely with no error (a known
+    // flutter_stripe/iOS quirk) — unfocus and let the dismiss animation
+    // finish first.
+    FocusScope.of(context).unfocus();
     setState(() => _processing = true);
+    await Future.delayed(const Duration(milliseconds: 300));
     await widget.onConfirm(_appliedCoupon, _finalAmount);
     if (mounted) Navigator.pop(context);
   }
