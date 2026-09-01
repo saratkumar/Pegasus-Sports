@@ -69,9 +69,10 @@ workflows:
         script: flutter build ipa --release --export-options-plist=/Users/builder/export_options.plist
       - name: Upload dSYMs to Crashlytics
         script: |
-          ios/Pods/FirebaseCrashlytics/upload-symbols \
-            -gsp ios/Runner/GoogleService-Info.plist \
-            -p ios \
+          echo "$FIREBASE_SERVICE_ACCOUNT_JSON" > /tmp/firebase-service-account.json
+          export GOOGLE_APPLICATION_CREDENTIALS=/tmp/firebase-service-account.json
+          npx --yes firebase-tools crashlytics:symbols:upload \
+            --app 1:100021036305:ios:d99f7bf0e0265f151298b0 \
             build/ios/archive/Runner.xcarchive/dSYMs
     artifacts:
       - build/ios/ipa/*.ipa
