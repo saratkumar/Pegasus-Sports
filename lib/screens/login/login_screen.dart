@@ -70,6 +70,12 @@ class _LoginScreenState extends State<LoginScreen> {
       final oauthCredential = OAuthProvider('apple.com').credential(
         idToken: appleCredential.identityToken,
         rawNonce: rawNonce,
+        // Firebase's server-side validation of the Apple token rejects it
+        // with "Invalid OAuth response from apple.com" if this is omitted —
+        // idToken/rawNonce alone aren't accepted even though they're the
+        // only two documented as required. See
+        // https://github.com/firebase/flutterfire/issues/13235#issuecomment-2315722003
+        accessToken: appleCredential.authorizationCode,
       );
 
       final result =
