@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 
@@ -39,43 +42,86 @@ class PaymentService {
   }) async {
     await _ensureInitialized();
 
-    final result = await _functions.httpsCallable('createPaymentIntent').call({
-      'amount': amount,
-      'currency': currency,
-      'planName': planName,
-    });
+    // Breadcrumbs, not error reports — the known failure mode here (see
+    // memberships_screen.dart's _confirm()) is the Stripe sheet silently
+    // never appearing, with no exception thrown at all, so there's nothing
+    // for Crashlytics to catch on its own. These persist across app
+    // restarts and get attached to the next thing that IS reported, so if
+    // a user hits the hang and force-quits, the timeouts below (or
+    // whatever they trigger next) will show exactly which step it stuck
+    // on instead of just "payment failed" with no context.
+    FirebaseCrashlytics.instance.log('processPayment: calling createPaymentIntent');
+    final result = await _functions
+        .httpsCallable('createPaymentIntent')
+        .call({
+          'amount': amount,
+          'currency': currency,
+          'planName': planName,
+        })
+        .timeout(const Duration(seconds: 20),
+            onTimeout: () => throw TimeoutException(
+                'createPaymentIntent did not respond within 20s'));
     final data = result.data as Map;
     final clientSecret = data['clientSecret'] as String;
     final paymentIntentId = data['paymentIntentId'] as String;
 
-    await Stripe.instance.initPaymentSheet(
-      paymentSheetParameters: SetupPaymentSheetParameters(
-        paymentIntentClientSecret: clientSecret,
-        merchantDisplayName: 'PSAS',
-        style: ThemeMode.light,
-        appearance: const PaymentSheetAppearance(
-          colors: PaymentSheetAppearanceColors(
-            primary: Color(0xFFFF7A00),
+    FirebaseCrashlytics.instance.log('processPayment: initializing payment sheet');
+    await Stripe.instance
+        .initPaymentSheet(
+          paymentSheetParameters: SetupPaymentSheetParameters(
+            paymentIntentClientSecret: clientSecret,
+            merchantDisplayName: 'PSAS',
+            // Required for redirect-based payment methods (PayNow and other
+            // automatic_payment_methods surfaced for SG, see functions/
+            // index.js createPaymentIntent) — without it, the SDK has no way
+            // to detect the user returned to the app after completing
+            // payment elsewhere (bank app/QR/Safari), and
+            // presentPaymentSheet() hangs indefinitely even though the
+            // payment itself succeeded. Must match the CFBundleURLSchemes
+            // entry in ios/Runner/Info.plist.
+            returnURL: 'psasbooking-stripe://stripe-redirect',
+            style: ThemeMode.light,
+            appearance: const PaymentSheetAppearance(
+              colors: PaymentSheetAppearanceColors(
+                primary: Color(0xFFFF7A00),
+              ),
+            ),
+            // PayNow (and other SG-local payment methods surfaced via
+            // automatic_payment_methods) requires a Singapore billing
+            // address — all customers are local, so prefill it instead of
+            // asking.
+            billingDetails: const BillingDetails(
+              address: Address(
+                city: null,
+                country: 'SG',
+                line1: null,
+                line2: null,
+                postalCode: null,
+                state: null,
+              ),
+            ),
           ),
-        ),
-        // PayNow (and other SG-local payment methods surfaced via
-        // automatic_payment_methods) requires a Singapore billing address —
-        // all customers are local, so prefill it instead of asking.
-        billingDetails: const BillingDetails(
-          address: Address(
-            city: null,
-            country: 'SG',
-            line1: null,
-            line2: null,
-            postalCode: null,
-            state: null,
-          ),
-        ),
-      ),
-    );
+        )
+        .timeout(const Duration(seconds: 15),
+            onTimeout: () => throw TimeoutException(
+                'initPaymentSheet did not complete within 15s — the Stripe '
+                'sheet likely never appeared'));
 
-    // Throws StripeException with code Canceled if user dismisses
-    await Stripe.instance.presentPaymentSheet();
+    FirebaseCrashlytics.instance.log('processPayment: presenting payment sheet');
+    // This is the call that actually renders the sheet — a bounded but
+    // generous timeout rather than none, since a real user filling in card
+    // details can legitimately take a couple minutes. Previously unbounded,
+    // which meant if the native call to show the sheet itself silently
+    // failed (nothing ever rendered), the app would hang forever with no
+    // way to ever recover or report it. Any timeout here is strictly safer
+    // than none for that case.
+    // Throws StripeException with code Canceled if user dismisses.
+    await Stripe.instance.presentPaymentSheet().timeout(
+        const Duration(minutes: 3),
+        onTimeout: () => throw TimeoutException(
+            'presentPaymentSheet did not complete within 3 minutes — the '
+            'Stripe sheet may never have rendered'));
+    FirebaseCrashlytics.instance.log('processPayment: payment sheet completed');
 
     return paymentIntentId;
   }

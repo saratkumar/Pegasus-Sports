@@ -58,6 +58,16 @@
 				<string>pegasus</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.psas.booking.stripe</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>psasbooking-stripe</string>
+			</array>
+		</dict>
 	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
