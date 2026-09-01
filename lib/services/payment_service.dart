@@ -23,8 +23,11 @@ class PaymentService {
   /// clients who never open the payment flow don't pay its memory/CPU cost.
   static Future<void> _ensureInitialized() async {
     if (_initialized) return;
+    FirebaseCrashlytics.instance.log('processPayment: applying Stripe settings');
     Stripe.publishableKey = _publishableKey;
-    await Stripe.instance.applySettings();
+    await Stripe.instance.applySettings().timeout(const Duration(seconds: 10),
+        onTimeout: () => throw TimeoutException(
+            'Stripe.applySettings did not complete within 10s'));
     _initialized = true;
   }
 
