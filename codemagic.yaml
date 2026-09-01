@@ -75,10 +75,14 @@ workflows:
           # FirebaseCrashlytics CocoaPod (this project resolves Firebase via
           # CocoaPods — see ios/Podfile's flutter_install_all_ios_pods — not
           # SPM, so it lives under ios/Pods, not DerivedData/SourcePackages).
-          UPLOAD_SYMBOLS=$(find ios/Pods/FirebaseCrashlytics \
+          UPLOAD_SYMBOLS=$(find ios/Pods \
             -name "upload-symbols" 2>/dev/null | head -1)
           if [ -z "$UPLOAD_SYMBOLS" ]; then
-            echo "upload-symbols tool not found in ios/Pods — skipping dSYM upload"
+            echo "upload-symbols tool not found anywhere in ios/Pods — skipping dSYM upload"
+            echo "--- debug: ios/Pods top-level contents ---"
+            ls ios/Pods 2>&1 || echo "ios/Pods does not exist"
+            echo "--- debug: any FirebaseCrashlytics dir? ---"
+            find ios/Pods -maxdepth 1 -iname "*crashlytics*" 2>&1
           else
             "$UPLOAD_SYMBOLS" \
               -gsp ios/Runner/GoogleService-Info.plist \
