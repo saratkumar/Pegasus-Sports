@@ -67,6 +67,12 @@ workflows:
             --custom-export-options '{"signingCertificate": "Apple Distribution"}'
       - name: Build ipa
         script: flutter build ipa --release --export-options-plist=/Users/builder/export_options.plist
+      - name: Upload dSYMs to Crashlytics
+        script: |
+          ios/Pods/FirebaseCrashlytics/upload-symbols \
+            -gsp ios/Runner/GoogleService-Info.plist \
+            -p ios \
+            build/ios/archive/Runner.xcarchive/dSYMs
     artifacts:
       - build/ios/ipa/*.ipa
     publishing:
