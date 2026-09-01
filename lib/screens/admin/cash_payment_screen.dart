@@ -9,6 +9,7 @@ import '../../services/membership_plan_service.dart';
 import '../../services/user_service.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
+import '../../utils/error_reporter.dart';
 
 /// Lets an admin record a membership sale paid in cash (or any other
 /// off-app method) — grants the membership/credits and generates the same
@@ -103,10 +104,16 @@ class _CashPaymentScreenState extends State<CashPaymentScreen> {
         _plans = results[1] as List<MembershipPlanModel>;
         _loading = false;
       });
-    } catch (e) {
+    } catch (e, st) {
       if (!mounted) return;
       setState(() => _loading = false);
-      AppToast.error(context, 'Failed to load clients/plans: $e');
+      reportError(
+        context,
+        e,
+        st,
+        userMessage: 'Could not load clients and plans. Please try again.',
+        reason: 'Cash payment screen data load failed',
+      );
     }
   }
 
@@ -220,9 +227,15 @@ class _CashPaymentScreenState extends State<CashPaymentScreen> {
           _paymentRef.clear();
         });
       }
-    } catch (e) {
+    } catch (e, st) {
       if (mounted) {
-        AppToast.error(context, e.toString().replaceFirst('Exception: ', ''));
+        reportError(
+          context,
+          e,
+          st,
+          userMessage: 'Could not record this cash payment. Please try again.',
+          reason: 'Cash payment submission failed',
+        );
       }
     }
     if (mounted) setState(() => _saving = false);

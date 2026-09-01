@@ -7,6 +7,7 @@ import '../../services/membership_plan_service.dart';
 import '../../services/notifications.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
+import '../../utils/error_reporter.dart';
 
 class ClassManagementScreen extends StatelessWidget {
   const ClassManagementScreen({super.key});
@@ -568,9 +569,17 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
         AppToast.success(context,
             widget.existing == null ? 'Class created' : 'Class updated');
       }
-    } catch (err) {
+    } catch (err, st) {
       setState(() => _saving = false);
-      if (mounted) AppToast.error(context, err.toString());
+      if (mounted) {
+        reportError(
+          context,
+          err,
+          st,
+          userMessage: 'Could not save this class. Please try again.',
+          reason: 'Class save failed',
+        );
+      }
     }
   }
 

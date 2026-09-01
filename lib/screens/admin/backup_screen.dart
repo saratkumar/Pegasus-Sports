@@ -7,6 +7,7 @@ import '../../services/backup_service.dart';
 import '../../services/cleanup_service.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
+import '../../utils/error_reporter.dart';
 
 /// Lets an admin export a snapshot of current Firestore config/live data
 /// (classes, facilities, types, bookings) to CSV — a disaster-recovery copy
@@ -174,8 +175,16 @@ class _BackupScreenState extends State<BackupScreen> {
       if (!mounted) return;
       setState(() => _lastBackupAt = DateTime.now());
       AppToast.success(context, 'Backup exported and saved');
-    } catch (e) {
-      if (mounted) AppToast.error(context, 'Backup failed: $e');
+    } catch (e, st) {
+      if (mounted) {
+        reportError(
+          context,
+          e,
+          st,
+          userMessage: 'Backup failed. Please try again.',
+          reason: 'Backup export failed',
+        );
+      }
     }
     if (mounted) setState(() => _backingUp = false);
   }
@@ -219,8 +228,16 @@ class _BackupScreenState extends State<BackupScreen> {
       setState(() => _lastCleanupAt = DateTime.now());
       AppToast.success(context,
           deleted == 0 ? 'Nothing to clear' : 'Cleared $deleted old record${deleted == 1 ? '' : 's'}');
-    } catch (e) {
-      if (mounted) AppToast.error(context, 'Clear failed: $e');
+    } catch (e, st) {
+      if (mounted) {
+        reportError(
+          context,
+          e,
+          st,
+          userMessage: 'Could not clear old data. Please try again.',
+          reason: 'Old data cleanup failed',
+        );
+      }
     }
     if (mounted) setState(() => _clearing = false);
   }

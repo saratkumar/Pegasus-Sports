@@ -14,6 +14,7 @@ import '../../services/request_notification_service.dart';
 import '../../services/waiting_list_service.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
+import '../../utils/error_reporter.dart';
 import '../../widgets/timeline_range_selector.dart';
 
 class AdminRequestsScreen extends StatefulWidget {
@@ -381,8 +382,16 @@ class _QrPaymentCardState extends State<_QrPaymentCard> {
       await QrPaymentService.approve(widget.req,
           paymentRef: refCtrl.text.trim().isEmpty ? null : refCtrl.text.trim());
       if (mounted) AppToast.success(context, 'Payment confirmed — plan activated & invoice emailed');
-    } catch (e) {
-      if (mounted) AppToast.error(context, 'Failed: $e');
+    } catch (e, st) {
+      if (mounted) {
+        reportError(
+          context,
+          e,
+          st,
+          userMessage: 'Could not confirm this payment. Please try again.',
+          reason: 'QR payment approval failed',
+        );
+      }
     } finally {
       if (mounted) setState(() => _processing = false);
     }
@@ -418,8 +427,16 @@ class _QrPaymentCardState extends State<_QrPaymentCard> {
     try {
       await QrPaymentService.reject(widget.req);
       if (mounted) AppToast.info(context, 'Request rejected');
-    } catch (e) {
-      if (mounted) AppToast.error(context, 'Failed: $e');
+    } catch (e, st) {
+      if (mounted) {
+        reportError(
+          context,
+          e,
+          st,
+          userMessage: 'Could not reject this request. Please try again.',
+          reason: 'QR payment rejection failed',
+        );
+      }
     } finally {
       if (mounted) setState(() => _processing = false);
     }
@@ -760,8 +777,16 @@ class _RequestCardState extends State<_RequestCard> {
                 : 'Request rejected'
                     '${archived ? '' : ' (Activity Log archive failed — request still resolved)'}');
       }
-    } catch (e) {
-      if (mounted) AppToast.error(context, 'Failed: ${e.toString()}');
+    } catch (e, st) {
+      if (mounted) {
+        reportError(
+          context,
+          e,
+          st,
+          userMessage: 'Could not resolve this request. Please try again.',
+          reason: 'Admin request resolution failed',
+        );
+      }
     } finally {
       if (mounted) setState(() => _processing = false);
     }
@@ -926,8 +951,15 @@ class _RequestCardState extends State<_RequestCard> {
             '${archived ? '' : ' (Activity Log archive failed — request still resolved)'}');
       }
     } catch (e, st) {
-      debugPrint('_approveSessionCancel: $e\n$st');
-      if (mounted) AppToast.error(context, 'Failed: ${e.toString()}');
+      if (mounted) {
+        reportError(
+          context,
+          e,
+          st,
+          userMessage: 'Could not approve this cancellation. Please try again.',
+          reason: 'Session cancellation approval failed',
+        );
+      }
     } finally {
       if (mounted) setState(() => _processing = false);
     }
@@ -1011,8 +1043,15 @@ class _RequestCardState extends State<_RequestCard> {
             '${archived ? '' : ' (Activity Log archive failed — request still resolved)'}');
       }
     } catch (e, st) {
-      debugPrint('_reassignTrainer: $e\n$st');
-      if (mounted) AppToast.error(context, 'Failed: ${e.toString()}');
+      if (mounted) {
+        reportError(
+          context,
+          e,
+          st,
+          userMessage: 'Could not reassign the trainer. Please try again.',
+          reason: 'Trainer reassignment failed',
+        );
+      }
     } finally {
       if (mounted) setState(() => _processing = false);
     }

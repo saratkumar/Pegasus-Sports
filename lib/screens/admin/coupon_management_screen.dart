@@ -3,6 +3,7 @@ import '../../models/coupon_model.dart';
 import '../../services/coupon_service.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
+import '../../utils/error_reporter.dart';
 
 class CouponManagementScreen extends StatelessWidget {
   const CouponManagementScreen({super.key});
@@ -295,10 +296,17 @@ class _CouponFormScreenState extends State<_CouponFormScreen> {
         AppToast.success(context,
             widget.existing == null ? 'Coupon created' : 'Coupon updated');
       }
-    } catch (err) {
+    } catch (err, st) {
       setState(() => _saving = false);
       if (mounted) {
-        AppToast.error(context, err.toString().replaceFirst('Exception: ', ''));
+        reportError(
+          context,
+          err,
+          st,
+          userMessage: friendlyMessage(
+              err, 'Could not save this coupon. Please try again.'),
+          reason: 'Coupon save failed',
+        );
       }
     }
   }

@@ -14,6 +14,7 @@ import '../../services/qr_payment_service.dart';
 import '../../services/user_service.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
+import '../../utils/error_reporter.dart';
 import '../../utils/plan_category_style.dart';
 
 class MembershipScreen extends StatefulWidget {
@@ -164,13 +165,26 @@ class _MembershipScreenState extends State<MembershipScreen> {
               : '${plan.name} activated! +${plan.credits} credits added — invoice email failed, our team has been notified',
         );
       }
-    } on StripeException catch (e) {
+    } on StripeException catch (e, st) {
       if (e.error.code != FailureCode.Canceled && context.mounted) {
-        AppToast.error(context, e.error.localizedMessage ?? 'Payment failed');
+        reportError(
+          context,
+          e,
+          st,
+          userMessage: 'Payment failed. Please try again or contact support.',
+          reason: 'Membership purchase Stripe payment failed',
+        );
       }
-    } catch (e) {
+    } catch (e, st) {
       if (context.mounted) {
-        AppToast.error(context, e.toString().replaceFirst('Exception: ', ''));
+        reportError(
+          context,
+          e,
+          st,
+          userMessage: friendlyMessage(
+              e, 'Payment failed. Please try again or contact support.'),
+          reason: 'Membership purchase failed',
+        );
       }
     }
   }
@@ -810,11 +824,18 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
     try {
       final coupon = await CouponService.validate(code);
       setState(() => _appliedCoupon = coupon);
-    } catch (e) {
-      setState(() {
-        _appliedCoupon = null;
-        _error = e.toString().replaceFirst('Exception: ', '');
-      });
+    } catch (e, st) {
+      setState(() => _appliedCoupon = null);
+      if (mounted) {
+        reportError(
+          context,
+          e,
+          st,
+          userMessage: friendlyMessage(
+              e, 'Could not apply this coupon. Please try again.'),
+          reason: 'Coupon validation failed',
+        );
+      }
     }
     if (mounted) setState(() => _validating = false);
   }
@@ -985,8 +1006,17 @@ class _QrPaySheetState extends State<_QrPaySheet> {
             "Sent — we'll confirm your payment and activate ${widget.plan.name} shortly");
         Navigator.pop(context, true);
       }
-    } catch (e) {
-      if (mounted) AppToast.error(context, e.toString());
+    } catch (e, st) {
+      if (mounted) {
+        reportError(
+          context,
+          e,
+          st,
+          userMessage: friendlyMessage(e,
+              'Could not submit your payment request. Please try again.'),
+          reason: 'QR payment request submission failed',
+        );
+      }
       setState(() => _submitting = false);
     }
   }

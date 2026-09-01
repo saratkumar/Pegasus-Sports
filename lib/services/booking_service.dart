@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 
 import '../models/class_model.dart';
 import 'class_service.dart';
@@ -153,7 +154,9 @@ class BookingService {
       ));
 
       return BookingResult.ok(bookingRef.id);
-    } catch (e) {
+    } catch (e, st) {
+      FirebaseCrashlytics.instance
+          .recordError(e, st, reason: 'Class booking failed', fatal: false);
       return BookingResult.failure(BookingFailureReason.unknown,
           errorDetail: e.toString());
     }

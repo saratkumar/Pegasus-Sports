@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../services/qr_payment_service.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
+import '../../utils/error_reporter.dart';
 
 /// Lets admin configure the business QR code shown to clients as an
 /// alternative to Stripe checkout — a plain image URL rather than an
@@ -39,8 +40,16 @@ class _PaymentQrScreenState extends State<PaymentQrScreen> {
         caption: _captionCtrl.text.trim(),
       );
       if (mounted) AppToast.success(context, 'QR code updated');
-    } catch (e) {
-      if (mounted) AppToast.error(context, e.toString());
+    } catch (e, st) {
+      if (mounted) {
+        reportError(
+          context,
+          e,
+          st,
+          userMessage: 'Could not save the QR code. Please try again.',
+          reason: 'Payment QR save failed',
+        );
+      }
     }
     if (mounted) setState(() => _saving = false);
   }

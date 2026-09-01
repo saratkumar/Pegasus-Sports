@@ -12,6 +12,7 @@ import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import '../../firebase_options.dart';
 import '../../services/user_service.dart';
 import '../../utils/app_colors.dart';
+import '../../utils/error_reporter.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -44,10 +45,15 @@ class _LoginScreenState extends State<LoginScreen> {
       final result =
           await FirebaseAuth.instance.signInWithCredential(credential);
       await _upsertUserAndFinish(result);
-    } catch (e) {
+    } catch (e, st) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(e.toString())));
+        reportError(
+          context,
+          e,
+          st,
+          userMessage: 'Sign-in failed. Please try again.',
+          reason: 'Google sign-in failed',
+        );
       }
     }
     if (mounted) setState(() => _loading = false);
@@ -92,17 +98,27 @@ class _LoginScreenState extends State<LoginScreen> {
         result,
         displayName: appleName.isNotEmpty ? appleName : null,
       );
-    } on SignInWithAppleAuthorizationException catch (e) {
+    } on SignInWithAppleAuthorizationException catch (e, st) {
       if (e.code == AuthorizationErrorCode.canceled) {
         // User dismissed the Apple sheet; nothing to report.
       } else if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(e.message)));
+        reportError(
+          context,
+          e,
+          st,
+          userMessage: 'Sign-in failed. Please try again.',
+          reason: 'Apple sign-in authorization failed',
+        );
       }
-    } catch (e) {
+    } catch (e, st) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(e.toString())));
+        reportError(
+          context,
+          e,
+          st,
+          userMessage: 'Sign-in failed. Please try again.',
+          reason: 'Apple sign-in failed',
+        );
       }
     }
     if (mounted) setState(() => _loading = false);

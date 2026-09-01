@@ -12,6 +12,7 @@ import '../screens/admin/class_roster_screen.dart';
 import '../screens/admin/facility_management_screen.dart';
 import '../screens/admin/plan_management_screen.dart';
 import '../screens/admin/type_management_screen.dart';
+import '../utils/error_reporter.dart';
 
 class AdminWebApp extends StatelessWidget {
   const AdminWebApp({super.key});
@@ -171,8 +172,16 @@ class _SignInScreenState extends State<_SignInScreen> {
       // for provider sign-in — signInWithProvider (the cross-platform
       // convenience method) throws UnimplementedError on web.
       await FirebaseAuth.instance.signInWithPopup(GoogleAuthProvider());
-    } catch (e) {
-      setState(() => _error = e.toString());
+    } catch (e, st) {
+      if (mounted) {
+        reportError(
+          context,
+          e,
+          st,
+          userMessage: 'Sign-in failed. Please try again.',
+          reason: 'Admin web sign-in failed',
+        );
+      }
     }
     if (mounted) setState(() => _loading = false);
   }

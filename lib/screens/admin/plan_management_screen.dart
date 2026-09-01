@@ -3,6 +3,7 @@ import '../../models/membership_plan_model.dart';
 import '../../services/membership_plan_service.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
+import '../../utils/error_reporter.dart';
 import '../../utils/plan_category_style.dart';
 
 class PlanManagementScreen extends StatefulWidget {
@@ -340,9 +341,17 @@ class _PlanFormScreenState extends State<_PlanFormScreen> {
         AppToast.success(context,
             widget.existing == null ? 'Plan created' : 'Plan updated');
       }
-    } catch (err) {
+    } catch (err, st) {
       setState(() => _saving = false);
-      if (mounted) AppToast.error(context, err.toString());
+      if (mounted) {
+        reportError(
+          context,
+          err,
+          st,
+          userMessage: 'Could not save this plan. Please try again.',
+          reason: 'Membership plan save failed',
+        );
+      }
     }
   }
 

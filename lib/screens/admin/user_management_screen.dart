@@ -7,6 +7,7 @@ import '../../services/config_service.dart';
 import '../../services/user_service.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
+import '../../utils/error_reporter.dart';
 
 class UserManagementScreen extends StatefulWidget {
   const UserManagementScreen({super.key});
@@ -550,8 +551,16 @@ class _UserEditSheetState extends State<_UserEditSheet> {
           AppToast.error(context, message);
         }
       }
-    } catch (e) {
-      if (mounted) AppToast.error(context, e.toString());
+    } catch (e, st) {
+      if (mounted) {
+        reportError(
+          context,
+          e,
+          st,
+          userMessage: 'Could not send the reminder. Please try again.',
+          reason: 'Renewal reminder send failed',
+        );
+      }
     } finally {
       if (mounted) setState(() => _sendingReminder = false);
     }
@@ -913,9 +922,17 @@ class _CreateUserSheetState extends State<_CreateUserSheet> {
         AppToast.success(context,
             'Invitation created — ${_name.text.trim()} can now sign in with Google');
       }
-    } catch (e) {
+    } catch (e, st) {
       setState(() => _saving = false);
-      if (mounted) AppToast.error(context, e.toString());
+      if (mounted) {
+        reportError(
+          context,
+          e,
+          st,
+          userMessage: 'Could not create the invitation. Please try again.',
+          reason: 'User invitation creation failed',
+        );
+      }
     }
   }
 

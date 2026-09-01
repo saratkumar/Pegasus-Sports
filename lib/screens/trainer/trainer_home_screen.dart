@@ -13,6 +13,7 @@ import '../../services/notifications.dart';
 import '../../services/request_notification_service.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
+import '../../utils/error_reporter.dart';
 
 class TrainerHomeScreen extends StatefulWidget {
   const TrainerHomeScreen({super.key});
@@ -191,8 +192,15 @@ class _TrainerHomeScreenState extends State<TrainerHomeScreen> {
         AppToast.success(context, 'Cancellation request sent to admin for approval');
       }
     } catch (e, st) {
-      debugPrint('_cancelClass error: $e\n$st');
-      if (mounted) AppToast.error(context, 'Request failed: ${e.toString()}');
+      if (mounted) {
+        reportError(
+          context,
+          e,
+          st,
+          userMessage: 'Could not send the cancellation request. Please try again.',
+          reason: 'Trainer session cancellation request failed',
+        );
+      }
     }
   }
 

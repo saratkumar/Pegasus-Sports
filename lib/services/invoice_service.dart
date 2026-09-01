@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'config_service.dart';
 import 'invoice_pdf_service.dart';
 
@@ -75,8 +76,10 @@ class InvoiceService {
             date: dateStr,
           );
           sheetRecorded = true;
-        } catch (_) {
+        } catch (e, st) {
           // Reported via the returned flag — no rethrow.
+          FirebaseCrashlytics.instance.recordError(e, st,
+              reason: 'Invoice sheet recording failed', fatal: false);
         }
       }());
     }
@@ -98,8 +101,10 @@ class InvoiceService {
             date: dateStr,
           );
           emailSent = true;
-        } catch (e) {
+        } catch (e, st) {
           error = e.toString();
+          FirebaseCrashlytics.instance.recordError(e, st,
+              reason: 'Invoice email send failed', fatal: false);
         }
       }());
     }

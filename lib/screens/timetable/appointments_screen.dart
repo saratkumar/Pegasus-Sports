@@ -5,6 +5,7 @@ import '../../models/appointment_model.dart';
 import '../../services/appointment_service.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
+import '../../utils/error_reporter.dart';
 
 /// One-on-one appointment slots (e.g. personal training). Booking a slot
 /// reserves it as pending — a trainer/admin must acknowledge it (see
@@ -26,9 +27,16 @@ class AppointmentsScreen extends StatelessWidget {
         AppToast.success(context,
             'Requested — waiting for the coach to confirm ${slot.appointmentName}');
       }
-    } catch (e) {
+    } catch (e, st) {
       if (context.mounted) {
-        AppToast.error(context, e.toString().replaceFirst('Exception: ', ''));
+        reportError(
+          context,
+          e,
+          st,
+          userMessage: friendlyMessage(
+              e, 'Could not book this appointment. Please try again.'),
+          reason: 'Appointment booking failed',
+        );
       }
     }
   }
