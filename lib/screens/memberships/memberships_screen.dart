@@ -44,12 +44,13 @@ class _MembershipScreenState extends State<MembershipScreen> {
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (_) => _CheckoutSheet(
         plan: plan,
-        onConfirm: (coupon, finalAmount, cardRegion, cardBrand) => _purchase(
-            context, plan,
-            coupon: coupon,
-            finalAmount: finalAmount,
-            cardRegion: cardRegion,
-            cardBrand: cardBrand),
+        onConfirm: (coupon, finalAmount, cardRegion, cardBrand, onStep) =>
+            _purchase(context, plan,
+                coupon: coupon,
+                finalAmount: finalAmount,
+                cardRegion: cardRegion,
+                cardBrand: cardBrand,
+                onStep: onStep),
       ),
     );
   }
@@ -61,6 +62,7 @@ class _MembershipScreenState extends State<MembershipScreen> {
     required double finalAmount,
     required String cardRegion,
     required String cardBrand,
+    void Function(String step)? onStep,
   }) async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
@@ -77,13 +79,14 @@ class _MembershipScreenState extends State<MembershipScreen> {
           currency: 'sgd',
           cardRegion: cardRegion,
           cardBrand: cardBrand,
-          // TODO(debug): temporary on-screen step breadcrumbs to localize the
-          // Stripe "sheet never appears" hang live on a test device, without
-          // waiting on Crashlytics' timeout + next-launch upload delay.
-          // Remove once root-caused.
-          onStep: (step) {
-            if (context.mounted) AppToast.info(context, step);
-          },
+          // TODO(debug): temporary status breadcrumbs to localize the Stripe
+          // "sheet never appears" hang live on a test device, without waiting
+          // on Crashlytics' timeout + next-launch upload delay. Surfaced
+          // inside the checkout sheet itself (see onStep below) rather than
+          // as a toast on the underlying screen's Scaffold, since that
+          // Scaffold sits behind the modal sheet and its SnackBars are
+          // invisible until the sheet closes. Remove once root-caused.
+          onStep: onStep,
         );
         paymentRef = payment.paymentIntentId;
         feeAmount = payment.feeAmount;
@@ -793,8 +796,12 @@ class _PlanCard extends StatelessWidget {
 
 class _CheckoutSheet extends StatefulWidget {
   final MembershipPlanModel plan;
-  final Future<void> Function(CouponModel? coupon, double finalAmount,
-      String cardRegion, String cardBrand) onConfirm;
+  final Future<void> Function(
+      CouponModel? coupon,
+      double finalAmount,
+      String cardRegion,
+      String cardBrand,
+      void Function(String step) onStep) onConfirm;
 
   const _CheckoutSheet({required this.plan, required this.onConfirm});
 
@@ -808,6 +815,11 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
   String? _error;
   bool _validating = false;
   bool _processing = false;
+  // TODO(debug): shows which payment step is in flight while _processing —
+  // rendered inside this sheet (not a toast on the screen behind it, whose
+  // SnackBars are hidden while this modal sheet is open). Remove once the
+  // Stripe "sheet never appears" hang is root-caused.
+  String? _statusText;
   // Self-declared by the customer — Stripe's PaymentSheet hides the actual
   // card until after the charge amount is already fixed, so there's no way
   // to detect these automatically before creating the PaymentIntent.
@@ -821,9 +833,15 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
     // flutter_stripe/iOS quirk) — unfocus and let the dismiss animation
     // finish first.
     FocusScope.of(context).unfocus();
-    setState(() => _processing = true);
+    setState(() {
+      _processing = true;
+      _statusText = null;
+    });
     await Future.delayed(const Duration(milliseconds: 300));
-    await widget.onConfirm(_appliedCoupon, _finalAmount, _cardRegion, _cardBrand);
+    await widget.onConfirm(_appliedCoupon, _finalAmount, _cardRegion,
+        _cardBrand, (step) {
+      if (mounted) setState(() => _statusText = step);
+    });
     if (mounted) Navigator.pop(context);
   }
 
@@ -1036,6 +1054,13 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
                         color: AppColors.textPrimary)),
               ],
             ),
+          ],
+          if (_processing && _statusText != null) ...[
+            const SizedBox(height: 10),
+            Text(_statusText!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    fontSize: 12, color: AppColors.textSecondary)),
           ],
           const SizedBox(height: 20),
           SizedBox(

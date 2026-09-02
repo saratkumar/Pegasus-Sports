@@ -63,7 +63,9 @@ class PaymentService {
     // fire and Crashlytics to flush the report on next app launch.
     void Function(String step)? onStep,
   }) async {
+    onStep?.call('Initializing Stripe...');
     await _ensureInitialized();
+    onStep?.call('Stripe initialized');
 
     // Breadcrumbs, not error reports — the known failure mode here (see
     // memberships_screen.dart's _confirm()) is the Stripe sheet silently
