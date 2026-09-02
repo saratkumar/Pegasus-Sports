@@ -37,6 +37,17 @@
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="pegasus"/>
             </intent-filter>
+            <!-- Stripe PaymentSheet return URL (redirect-based methods like
+                 PayNow, and 3DS) — mirrors the CFBundleURLSchemes entry in
+                 ios/Runner/Info.plist. Without this, the SDK has no way to
+                 route the app back after a redirect and presentPaymentSheet()
+                 hangs/fails on Android. See payment_service.dart. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="psasbooking-stripe"/>
+            </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
