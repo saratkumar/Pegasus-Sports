@@ -69,26 +69,21 @@ workflows:
         script: flutter build ipa --release --export-options-plist=/Users/builder/export_options.plist
       - name: Upload dSYMs to Crashlytics
         script: |
-          # firebase-tools' `crashlytics:symbols:upload` is for Android/native
-          # (breakpad) symbols only — wrong tool for Apple dSYMs. Firebase
-          # ships its own upload-symbols binary as a resource inside the
-          # FirebaseCrashlytics CocoaPod (this project resolves Firebase via
-          # CocoaPods — see ios/Podfile's flutter_install_all_ios_pods — not
-          # SPM, so it lives under ios/Pods, not DerivedData/SourcePackages).
-          UPLOAD_SYMBOLS=$(find ios/Pods \
-            -name "upload-symbols" 2>/dev/null | head -1)
-          if [ -z "$UPLOAD_SYMBOLS" ]; then
-            echo "upload-symbols tool not found anywhere in ios/Pods — skipping dSYM upload"
-            echo "--- debug: ios/Pods top-level contents ---"
-            ls ios/Pods 2>&1 || echo "ios/Pods does not exist"
-            echo "--- debug: any FirebaseCrashlytics dir? ---"
-            find ios/Pods -maxdepth 1 -iname "*crashlytics*" 2>&1
-          else
-            "$UPLOAD_SYMBOLS" \
-              -gsp ios/Runner/GoogleService-Info.plist \
-              -p ios \
-              build/ios/archive/Runner.xcarchive/dSYMs
-          fi
+          # TEMPORARY diagnostic pass — two prior guesses at where Firebase's
+          # upload-symbols binary lands on this runner (ios/Pods for
+          # CocoaPods, DerivedData/SourcePackages for SPM) both came up
+          # empty. Rather than guess a third time (each guess costs a full
+          # CI build), search the whole filesystem on the actual runner and
+          # report the real path so the next pass can target it exactly.
+          echo "--- searching entire filesystem for upload-symbols ---"
+          find / -iname "upload-symbols" -type f 2>/dev/null || true
+          echo "--- done searching ---"
+          echo "--- debug: does ios/Pods have anything Firebase-ish? ---"
+          find ios/Pods -maxdepth 1 -iname "*firebase*" 2>&1 || true
+          echo "--- debug: any firebase-ios-sdk checkout anywhere? ---"
+          find / -maxdepth 6 -iname "firebase-ios-sdk" -type d 2>/dev/null || true
+          echo "--- diagnostic step complete, always exits 0 ---"
+          exit 0
     artifacts:
       - build/ios/ipa/*.ipa
     publishing:
