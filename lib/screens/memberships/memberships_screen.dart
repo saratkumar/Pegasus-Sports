@@ -77,6 +77,13 @@ class _MembershipScreenState extends State<MembershipScreen> {
           currency: 'sgd',
           cardRegion: cardRegion,
           cardBrand: cardBrand,
+          // TODO(debug): temporary on-screen step breadcrumbs to localize the
+          // Stripe "sheet never appears" hang live on a test device, without
+          // waiting on Crashlytics' timeout + next-launch upload delay.
+          // Remove once root-caused.
+          onStep: (step) {
+            if (context.mounted) AppToast.info(context, step);
+          },
         );
         paymentRef = payment.paymentIntentId;
         feeAmount = payment.feeAmount;

@@ -57,6 +57,11 @@ class PaymentService {
     required String currency,
     required String cardRegion,
     required String cardBrand,
+    // Mirrors the Crashlytics breadcrumbs below as an on-screen toast, so
+    // the silent-hang failure mode (see comment further down) can be
+    // localized live on a test device instead of waiting on a timeout to
+    // fire and Crashlytics to flush the report on next app launch.
+    void Function(String step)? onStep,
   }) async {
     await _ensureInitialized();
 
@@ -68,6 +73,7 @@ class PaymentService {
     // a user hits the hang and force-quits, the timeouts below (or
     // whatever they trigger next) will show exactly which step it stuck
     // on instead of just "payment failed" with no context.
+    onStep?.call('Creating payment...');
     FirebaseCrashlytics.instance.log('processPayment: calling createPaymentIntent');
     final result = await _functions
         .httpsCallable('createPaymentIntent')
@@ -88,6 +94,7 @@ class PaymentService {
     final feeAmount = (data['feeAmount'] as num).toDouble();
     final grossAmount = (data['grossAmount'] as num).toDouble();
 
+    onStep?.call('Preparing payment sheet...');
     FirebaseCrashlytics.instance.log('processPayment: initializing payment sheet');
     await Stripe.instance
         .initPaymentSheet(
@@ -130,6 +137,7 @@ class PaymentService {
                 'initPaymentSheet did not complete within 15s — the Stripe '
                 'sheet likely never appeared'));
 
+    onStep?.call('Opening payment sheet...');
     FirebaseCrashlytics.instance.log('processPayment: presenting payment sheet');
     // This is the call that actually renders the sheet — a bounded but
     // generous timeout rather than none, since a real user filling in card
@@ -144,6 +152,7 @@ class PaymentService {
         onTimeout: () => throw TimeoutException(
             'presentPaymentSheet did not complete within 3 minutes — the '
             'Stripe sheet may never have rendered'));
+    onStep?.call('Payment sheet completed');
     FirebaseCrashlytics.instance.log('processPayment: payment sheet completed');
 
     return (
