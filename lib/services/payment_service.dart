@@ -103,15 +103,20 @@ class PaymentService {
           paymentSheetParameters: SetupPaymentSheetParameters(
             paymentIntentClientSecret: clientSecret,
             merchantDisplayName: 'PSAS',
-            // Required for redirect-based payment methods (PayNow and other
-            // automatic_payment_methods surfaced for SG, see functions/
-            // index.js createPaymentIntent) — without it, the SDK has no way
-            // to detect the user returned to the app after completing
-            // payment elsewhere (bank app/QR/Safari), and
-            // presentPaymentSheet() hangs indefinitely even though the
-            // payment itself succeeded. Must match the CFBundleURLSchemes
-            // entry in ios/Runner/Info.plist.
-            returnURL: 'psasbooking-stripe://stripe-redirect',
+            // Deliberately omitted. This is normally required for
+            // redirect-based payment methods (PayNow and other automatic_
+            // payment_methods surfaced for SG, see functions/index.js
+            // createPaymentIntent) so the SDK can detect the user returning
+            // to the app after paying elsewhere (bank app/QR/Safari) — but
+            // setting it is a known unresolved flutter_stripe/Stripe-iOS bug
+            // that makes presentPaymentSheet() hang/crash specifically on
+            // TestFlight-distributed builds (works fine in local debug/
+            // release): https://github.com/flutter-stripe/flutter_stripe/issues/1605
+            // https://github.com/flutter-stripe/flutter_stripe/issues/1689
+            // Without a returnURL, Stripe's PaymentSheet automatically hides
+            // payment methods that require a redirect (e.g. PayNow), so only
+            // card is offered — a worthwhile trade until upstream is fixed,
+            // since redirect methods can't complete on TestFlight anyway.
             style: ThemeMode.light,
             appearance: const PaymentSheetAppearance(
               colors: PaymentSheetAppearanceColors(
