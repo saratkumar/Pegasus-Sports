@@ -67,25 +67,20 @@ workflows:
             --custom-export-options '{"signingCertificate": "Apple Distribution"}'
       - name: Build ipa
         script: flutter build ipa --release --export-options-plist=/Users/builder/export_options.plist
-      - name: Upload dSYMs to Crashlytics
+      - name: Package dSYMs for manual Crashlytics upload
         script: |
-          # TEMPORARY diagnostic pass — two prior guesses at where Firebase's
-          # upload-symbols binary lands on this runner (ios/Pods for
-          # CocoaPods, DerivedData/SourcePackages for SPM) both came up
-          # empty. Rather than guess a third time (each guess costs a full
-          # CI build), search the whole filesystem on the actual runner and
-          # report the real path so the next pass can target it exactly.
-          echo "--- searching entire filesystem for upload-symbols ---"
-          find / -iname "upload-symbols" -type f 2>/dev/null || true
-          echo "--- done searching ---"
-          echo "--- debug: does ios/Pods have anything Firebase-ish? ---"
-          find ios/Pods -maxdepth 1 -iname "*firebase*" 2>&1 || true
-          echo "--- debug: any firebase-ios-sdk checkout anywhere? ---"
-          find / -maxdepth 6 -iname "firebase-ios-sdk" -type d 2>/dev/null || true
-          echo "--- diagnostic step complete, always exits 0 ---"
-          exit 0
+          # No Mac available to run Xcode Organizer or hunt for Firebase's
+          # upload-symbols binary on this runner (two guesses at its path
+          # both came up empty) — sidestep that entirely. The dSYMs already
+          # exist right after the archive step regardless of how Firebase
+          # was resolved (CocoaPods/SPM), so just zip them as a normal
+          # downloadable build artifact. Download this from the Codemagic
+          # build page in any browser, then drag-and-drop it onto Crashlytics'
+          # "Manage dSYMs" upload page — no CLI tool or Mac required.
+          cd build/ios/archive/Runner.xcarchive/dSYMs && zip -r ../../../dSYMs.zip .
     artifacts:
       - build/ios/ipa/*.ipa
+      - build/ios/dSYMs.zip
     publishing:
       app_store_connect:
         auth: integration
