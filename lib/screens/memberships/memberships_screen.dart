@@ -36,23 +36,29 @@ class _MembershipScreenState extends State<MembershipScreen> {
 
   Future<void> _openCheckout(
       BuildContext context, MembershipPlanModel plan) async {
-    await showModalBottomSheet(
+    // The checkout sheet only collects the coupon/card-tier choice and pops
+    // with the result — it does NOT run the purchase itself. Stripe's
+    // presentPaymentSheet() must never be called while another Flutter modal
+    // (this sheet) is still open/mid-transition: a known flutter_stripe/iOS
+    // quirk where the native sheet then never appears and the call hangs
+    // forever with no error at all. Running _purchase only after this modal
+    // has fully closed avoids that entirely.
+    final result =
+        await showModalBottomSheet<(CouponModel?, double, String, String)>(
       context: context,
       isScrollControlled: true,
       backgroundColor: AppColors.bg,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (_) => _CheckoutSheet(
-        plan: plan,
-        onConfirm: (coupon, finalAmount, cardRegion, cardBrand, onStep) =>
-            _purchase(context, plan,
-                coupon: coupon,
-                finalAmount: finalAmount,
-                cardRegion: cardRegion,
-                cardBrand: cardBrand,
-                onStep: onStep),
-      ),
+      builder: (_) => _CheckoutSheet(plan: plan),
     );
+    if (result == null || !context.mounted) return;
+    final (coupon, finalAmount, cardRegion, cardBrand) = result;
+    await _purchase(context, plan,
+        coupon: coupon,
+        finalAmount: finalAmount,
+        cardRegion: cardRegion,
+        cardBrand: cardBrand);
   }
 
   Future<void> _purchase(
@@ -62,11 +68,53 @@ class _MembershipScreenState extends State<MembershipScreen> {
     required double finalAmount,
     required String cardRegion,
     required String cardBrand,
-    void Function(String step)? onStep,
   }) async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
     if (!context.mounted) return;
+
+    // Shown only now that the checkout sheet has fully closed (see
+    // _openCheckout) — Stripe's presentPaymentSheet() must never run while
+    // another Flutter modal is still open/mid-transition.
+    final statusNotifier = ValueNotifier<String?>(null);
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => PopScope(
+        canPop: false,
+        child: Center(
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: AppColors.card,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const CircularProgressIndicator(color: AppColors.primary),
+                ValueListenableBuilder<String?>(
+                  valueListenable: statusNotifier,
+                  builder: (_, status, __) => status == null
+                      ? const SizedBox()
+                      : Padding(
+                          padding: const EdgeInsets.only(top: 12),
+                          child: Text(status,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                  fontSize: 12,
+                                  color: AppColors.textSecondary)),
+                        ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    void closeLoadingDialog() {
+      if (context.mounted) Navigator.of(context, rootNavigator: true).pop();
+    }
 
     try {
       String paymentRef;
@@ -81,12 +129,9 @@ class _MembershipScreenState extends State<MembershipScreen> {
           cardBrand: cardBrand,
           // TODO(debug): temporary status breadcrumbs to localize the Stripe
           // "sheet never appears" hang live on a test device, without waiting
-          // on Crashlytics' timeout + next-launch upload delay. Surfaced
-          // inside the checkout sheet itself (see onStep below) rather than
-          // as a toast on the underlying screen's Scaffold, since that
-          // Scaffold sits behind the modal sheet and its SnackBars are
-          // invisible until the sheet closes. Remove once root-caused.
-          onStep: onStep,
+          // on Crashlytics' timeout + next-launch upload delay. Remove once
+          // root-caused.
+          onStep: (step) => statusNotifier.value = step,
         );
         paymentRef = payment.paymentIntentId;
         feeAmount = payment.feeAmount;
@@ -215,6 +260,8 @@ class _MembershipScreenState extends State<MembershipScreen> {
           reason: 'Membership purchase failed',
         );
       }
+    } finally {
+      closeLoadingDialog();
     }
   }
 
@@ -796,14 +843,8 @@ class _PlanCard extends StatelessWidget {
 
 class _CheckoutSheet extends StatefulWidget {
   final MembershipPlanModel plan;
-  final Future<void> Function(
-      CouponModel? coupon,
-      double finalAmount,
-      String cardRegion,
-      String cardBrand,
-      void Function(String step) onStep) onConfirm;
 
-  const _CheckoutSheet({required this.plan, required this.onConfirm});
+  const _CheckoutSheet({required this.plan});
 
   @override
   State<_CheckoutSheet> createState() => _CheckoutSheetState();
@@ -814,12 +855,10 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
   CouponModel? _appliedCoupon;
   String? _error;
   bool _validating = false;
+  // Only true for the brief unfocus/dismiss-animation delay below, not for
+  // the purchase itself — this sheet no longer runs the purchase; it just
+  // collects the choice and pops with it (see _openCheckout in the parent).
   bool _processing = false;
-  // TODO(debug): shows which payment step is in flight while _processing —
-  // rendered inside this sheet (not a toast on the screen behind it, whose
-  // SnackBars are hidden while this modal sheet is open). Remove once the
-  // Stripe "sheet never appears" hang is root-caused.
-  String? _statusText;
   // Self-declared by the customer — Stripe's PaymentSheet hides the actual
   // card until after the charge amount is already fixed, so there's no way
   // to detect these automatically before creating the PaymentIntent.
@@ -831,18 +870,16 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
     // PaymentSheet while the keyboard is up/mid-dismiss can leave iOS's
     // presentPaymentSheet() hanging indefinitely with no error (a known
     // flutter_stripe/iOS quirk) — unfocus and let the dismiss animation
-    // finish first.
+    // finish first. The purchase itself (including Stripe's sheet) only
+    // runs after this sheet has fully popped, in the parent — never while
+    // this modal is still open/mid-transition.
     FocusScope.of(context).unfocus();
-    setState(() {
-      _processing = true;
-      _statusText = null;
-    });
+    setState(() => _processing = true);
     await Future.delayed(const Duration(milliseconds: 300));
-    await widget.onConfirm(_appliedCoupon, _finalAmount, _cardRegion,
-        _cardBrand, (step) {
-      if (mounted) setState(() => _statusText = step);
-    });
-    if (mounted) Navigator.pop(context);
+    if (mounted) {
+      Navigator.pop(
+          context, (_appliedCoupon, _finalAmount, _cardRegion, _cardBrand));
+    }
   }
 
   Future<void> _payViaQr() async {
@@ -1054,13 +1091,6 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
                         color: AppColors.textPrimary)),
               ],
             ),
-          ],
-          if (_processing && _statusText != null) ...[
-            const SizedBox(height: 10),
-            Text(_statusText!,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                    fontSize: 12, color: AppColors.textSecondary)),
           ],
           const SizedBox(height: 20),
           SizedBox(
