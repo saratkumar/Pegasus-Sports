@@ -27,11 +27,35 @@ class MembershipScreen extends StatefulWidget {
 
 class _MembershipScreenState extends State<MembershipScreen> {
   String? _selectedCategory;
+  // TODO(debug): isolates presentPaymentSheet() from all of this app's own
+  // navigation (checkout bottom sheet, loading dialog) to test whether the
+  // Stripe SDK call works at all with zero Flutter modals/routes involved.
+  // Remove once the "sheet never appears" hang is root-caused.
+  String? _debugStripeStatus;
 
   @override
   void initState() {
     super.initState();
     MembershipPlanService.ensureSeeded();
+  }
+
+  Future<void> _debugTestStripeDirectly(BuildContext context) async {
+    setState(() => _debugStripeStatus = 'Starting...');
+    try {
+      await PaymentService.processPayment(
+        planName: 'Debug Test',
+        netAmount: 1.0,
+        currency: 'sgd',
+        cardRegion: 'domestic',
+        cardBrand: 'visa_mc',
+        onStep: (step) {
+          if (mounted) setState(() => _debugStripeStatus = step);
+        },
+      );
+      if (mounted) setState(() => _debugStripeStatus = 'Sheet completed!');
+    } catch (e) {
+      if (mounted) setState(() => _debugStripeStatus = 'Error: $e');
+    }
   }
 
   Future<void> _openCheckout(
@@ -270,10 +294,38 @@ class _MembershipScreenState extends State<MembershipScreen> {
     final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
     return Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: AppBar(title: const Text('Membership Plans')),
+      appBar: AppBar(
+        title: const Text('Membership Plans'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.bug_report_outlined),
+            tooltip: 'Debug: test Stripe sheet directly',
+            onPressed: () => _debugTestStripeDirectly(context),
+          ),
+        ],
+      ),
       body: uid.isEmpty
           ? const SizedBox()
-          : StreamBuilder<List<MembershipPlanModel>>(
+          : Column(
+              children: [
+                if (_debugStripeStatus != null)
+                  Container(
+                    width: double.infinity,
+                    color: Colors.black87,
+                    padding: const EdgeInsets.all(12),
+                    child: Text(
+                      'Stripe debug: $_debugStripeStatus',
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                    ),
+                  ),
+                Expanded(child: _buildPlansBody(uid)),
+              ],
+            ),
+    );
+  }
+
+  Widget _buildPlansBody(String uid) {
+    return StreamBuilder<List<MembershipPlanModel>>(
               stream: MembershipPlanService.streamPlans(),
               builder: (context, planSnap) {
                 if (planSnap.connectionState == ConnectionState.waiting &&
@@ -370,8 +422,7 @@ class _MembershipScreenState extends State<MembershipScreen> {
                   },
                 );
               },
-            ),
-    );
+            );
   }
 }
 
