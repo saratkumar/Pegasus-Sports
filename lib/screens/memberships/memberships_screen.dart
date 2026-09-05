@@ -66,8 +66,14 @@ class _MembershipScreenState extends State<MembershipScreen> {
   Future<void> _debugTestShareSheet(BuildContext context) async {
     setState(() => _debugStripeStatus = 'Opening share sheet...');
     try {
-      final result = await Share.share('Native share sheet test')
-          .timeout(const Duration(seconds: 15),
+      final box = context.findRenderObject() as RenderBox?;
+      final origin = box != null
+          ? box.localToGlobal(Offset.zero) & box.size
+          : const Rect.fromLTWH(0, 0, 1, 1);
+      final result = await Share.share(
+        'Native share sheet test',
+        sharePositionOrigin: origin,
+      ).timeout(const Duration(seconds: 15),
               onTimeout: () => throw TimeoutException(
                   'Share sheet did not complete within 15s — same hang, '
                   'not Stripe-specific'));
