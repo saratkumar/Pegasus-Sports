@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
+import 'package:share_plus/share_plus.dart';
 import '../../models/coupon_model.dart';
 import '../../models/membership_plan_model.dart';
 import '../../models/user_model.dart';
@@ -55,6 +56,26 @@ class _MembershipScreenState extends State<MembershipScreen> {
       if (mounted) setState(() => _debugStripeStatus = 'Sheet completed!');
     } catch (e) {
       if (mounted) setState(() => _debugStripeStatus = 'Error: $e');
+    }
+  }
+
+  // TODO(debug): tests whether ANY native modal (unrelated to Stripe) can be
+  // presented at all in this build — rules in/out a systemic native
+  // presentation problem vs something Stripe-specific. Remove once the
+  // "sheet never appears" hang is root-caused.
+  Future<void> _debugTestShareSheet(BuildContext context) async {
+    setState(() => _debugStripeStatus = 'Opening share sheet...');
+    try {
+      final result = await Share.share('Native share sheet test')
+          .timeout(const Duration(seconds: 15),
+              onTimeout: () => throw TimeoutException(
+                  'Share sheet did not complete within 15s — same hang, '
+                  'not Stripe-specific'));
+      if (mounted) {
+        setState(() => _debugStripeStatus = 'Share sheet result: $result');
+      }
+    } catch (e) {
+      if (mounted) setState(() => _debugStripeStatus = 'Share error: $e');
     }
   }
 
@@ -301,6 +322,11 @@ class _MembershipScreenState extends State<MembershipScreen> {
             icon: const Icon(Icons.bug_report_outlined),
             tooltip: 'Debug: test Stripe sheet directly',
             onPressed: () => _debugTestStripeDirectly(context),
+          ),
+          IconButton(
+            icon: const Icon(Icons.ios_share),
+            tooltip: 'Debug: test native share sheet (non-Stripe)',
+            onPressed: () => _debugTestShareSheet(context),
           ),
         ],
       ),
