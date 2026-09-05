@@ -12,6 +12,47 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+
+    // TODO(debug): reports live native window/view-controller state on
+    // demand, so the "presentPaymentSheet never renders" hang can be
+    // diagnosed from on-device UI alone — no Mac, no external log capture.
+    // Mirrors exactly what stripe_ios's presentPaymentSheet/
+    // findViewControllerPresenter (StripeSdk.swift) would resolve when
+    // looking for a view controller to present from. Remove once
+    // root-caused.
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "DebugDiagnostics") {
+      let channel = FlutterMethodChannel(
+        name: "debug/native_diagnostics",
+        binaryMessenger: registrar.messenger()
+      )
+      channel.setMethodCallHandler { [weak self] call, result in
+        guard call.method == "checkWindowState" else {
+          result(FlutterMethodNotImplemented)
+          return
+        }
+        let delegateWindow = UIApplication.shared.delegate?.window ?? nil
+        let scenes = UIApplication.shared.connectedScenes
+        let windowScenes = scenes.compactMap { $0 as? UIWindowScene }
+        let sceneWindow = windowScenes.first?.windows.first
+        let effectivePresenter = delegateWindow?.rootViewController
+          ?? sceneWindow?.rootViewController
+        var topPresenter = effectivePresenter
+        while let presented = topPresenter?.presentedViewController {
+          topPresenter = presented
+        }
+        result([
+          "appDelegateWindowIsNil": delegateWindow == nil,
+          "appDelegateWindowIsKeyWindow": delegateWindow?.isKeyWindow ?? false,
+          "connectedScenesCount": scenes.count,
+          "windowScenesCount": windowScenes.count,
+          "firstWindowSceneWindowCount": windowScenes.first?.windows.count ?? -1,
+          "sceneWindowRootVCType": sceneWindow?.rootViewController.map { "\(type(of: $0))" } ?? "nil",
+          "effectivePresenterType": effectivePresenter.map { "\(type(of: $0))" } ?? "nil",
+          "topPresenterType": topPresenter.map { "\(type(of: $0))" } ?? "nil",
+          "topPresenterViewInWindow": topPresenter?.viewIfLoaded?.window != nil,
+        ])
+      }
+    }
   }
 
   // Info.plist declares UIApplicationSceneManifest, so this app's real

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:share_plus/share_plus.dart';
@@ -82,6 +83,27 @@ class _MembershipScreenState extends State<MembershipScreen> {
       }
     } catch (e) {
       if (mounted) setState(() => _debugStripeStatus = 'Share error: $e');
+    }
+  }
+
+  // TODO(debug): asks native iOS code directly whether AppDelegate.window is
+  // populated and what Stripe's own presenter-finding logic would resolve to
+  // — see AppDelegate.swift's "debug/native_diagnostics" channel. Gives a
+  // definitive yes/no on the window-nil theory without needing a Mac/device
+  // console. Remove once the "sheet never appears" hang is root-caused.
+  static const _debugChannel = MethodChannel('debug/native_diagnostics');
+
+  Future<void> _debugCheckWindowState(BuildContext context) async {
+    setState(() => _debugStripeStatus = 'Checking native window state...');
+    try {
+      final result = await _debugChannel
+          .invokeMethod<Map>('checkWindowState')
+          .timeout(const Duration(seconds: 5));
+      if (mounted) {
+        setState(() => _debugStripeStatus = result.toString());
+      }
+    } catch (e) {
+      if (mounted) setState(() => _debugStripeStatus = 'Diagnostic error: $e');
     }
   }
 
@@ -333,6 +355,11 @@ class _MembershipScreenState extends State<MembershipScreen> {
             icon: const Icon(Icons.ios_share),
             tooltip: 'Debug: test native share sheet (non-Stripe)',
             onPressed: () => _debugTestShareSheet(context),
+          ),
+          IconButton(
+            icon: const Icon(Icons.window_outlined),
+            tooltip: 'Debug: check native window state',
+            onPressed: () => _debugCheckWindowState(context),
           ),
         ],
       ),
