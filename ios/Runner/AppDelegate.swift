@@ -25,32 +25,58 @@ import UIKit
         name: "debug/native_diagnostics",
         binaryMessenger: registrar.messenger()
       )
-      channel.setMethodCallHandler { [weak self] call, result in
+      channel.setMethodCallHandler { call, result in
         guard call.method == "checkWindowState" else {
           result(FlutterMethodNotImplemented)
           return
         }
-        let delegateWindow = UIApplication.shared.delegate?.window ?? nil
-        let scenes = UIApplication.shared.connectedScenes
-        let windowScenes = scenes.compactMap { $0 as? UIWindowScene }
-        let sceneWindow = windowScenes.first?.windows.first
-        let effectivePresenter = delegateWindow?.rootViewController
-          ?? sceneWindow?.rootViewController
-        var topPresenter = effectivePresenter
+        let delegateWindow: UIWindow? = UIApplication.shared.delegate?.window ?? nil
+        let scenes: Set<UIScene> = UIApplication.shared.connectedScenes
+        let windowScenes: [UIWindowScene] = scenes.compactMap { $0 as? UIWindowScene }
+        let sceneWindow: UIWindow? = windowScenes.first?.windows.first
+        let effectivePresenter: UIViewController? =
+          delegateWindow?.rootViewController ?? sceneWindow?.rootViewController
+
+        var topPresenter: UIViewController? = effectivePresenter
         while let presented = topPresenter?.presentedViewController {
           topPresenter = presented
         }
-        result([
+
+        let sceneWindowRootVCType: String
+        if let vc = sceneWindow?.rootViewController {
+          sceneWindowRootVCType = "\(type(of: vc))"
+        } else {
+          sceneWindowRootVCType = "nil"
+        }
+
+        let effectivePresenterType: String
+        if let vc = effectivePresenter {
+          effectivePresenterType = "\(type(of: vc))"
+        } else {
+          effectivePresenterType = "nil"
+        }
+
+        let topPresenterType: String
+        if let vc = topPresenter {
+          topPresenterType = "\(type(of: vc))"
+        } else {
+          topPresenterType = "nil"
+        }
+
+        let topPresenterViewInWindow: Bool = topPresenter?.viewIfLoaded?.window != nil
+
+        let diagnostics: [String: Any] = [
           "appDelegateWindowIsNil": delegateWindow == nil,
           "appDelegateWindowIsKeyWindow": delegateWindow?.isKeyWindow ?? false,
           "connectedScenesCount": scenes.count,
           "windowScenesCount": windowScenes.count,
           "firstWindowSceneWindowCount": windowScenes.first?.windows.count ?? -1,
-          "sceneWindowRootVCType": sceneWindow?.rootViewController.map { "\(type(of: $0))" } ?? "nil",
-          "effectivePresenterType": effectivePresenter.map { "\(type(of: $0))" } ?? "nil",
-          "topPresenterType": topPresenter.map { "\(type(of: $0))" } ?? "nil",
-          "topPresenterViewInWindow": topPresenter?.viewIfLoaded?.window != nil,
-        ])
+          "sceneWindowRootVCType": sceneWindowRootVCType,
+          "effectivePresenterType": effectivePresenterType,
+          "topPresenterType": topPresenterType,
+          "topPresenterViewInWindow": topPresenterViewInWindow,
+        ]
+        result(diagnostics)
       }
     }
   }
