@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
-import 'package:share_plus/share_plus.dart';
 import '../../models/coupon_model.dart';
 import '../../models/membership_plan_model.dart';
 import '../../models/user_model.dart';
@@ -29,82 +28,11 @@ class MembershipScreen extends StatefulWidget {
 
 class _MembershipScreenState extends State<MembershipScreen> {
   String? _selectedCategory;
-  // TODO(debug): isolates presentPaymentSheet() from all of this app's own
-  // navigation (checkout bottom sheet, loading dialog) to test whether the
-  // Stripe SDK call works at all with zero Flutter modals/routes involved.
-  // Remove once the "sheet never appears" hang is root-caused.
-  String? _debugStripeStatus;
 
   @override
   void initState() {
     super.initState();
     MembershipPlanService.ensureSeeded();
-  }
-
-  Future<void> _debugTestStripeDirectly(BuildContext context) async {
-    setState(() => _debugStripeStatus = 'Starting...');
-    try {
-      await PaymentService.processPayment(
-        planName: 'Debug Test',
-        netAmount: 1.0,
-        currency: 'sgd',
-        cardRegion: 'domestic',
-        cardBrand: 'visa_mc',
-        onStep: (step) {
-          if (mounted) setState(() => _debugStripeStatus = step);
-        },
-      );
-      if (mounted) setState(() => _debugStripeStatus = 'Sheet completed!');
-    } catch (e) {
-      if (mounted) setState(() => _debugStripeStatus = 'Error: $e');
-    }
-  }
-
-  // TODO(debug): tests whether ANY native modal (unrelated to Stripe) can be
-  // presented at all in this build — rules in/out a systemic native
-  // presentation problem vs something Stripe-specific. Remove once the
-  // "sheet never appears" hang is root-caused.
-  Future<void> _debugTestShareSheet(BuildContext context) async {
-    setState(() => _debugStripeStatus = 'Opening share sheet...');
-    try {
-      final box = context.findRenderObject() as RenderBox?;
-      final origin = box != null
-          ? box.localToGlobal(Offset.zero) & box.size
-          : const Rect.fromLTWH(0, 0, 1, 1);
-      final result = await Share.share(
-        'Native share sheet test',
-        sharePositionOrigin: origin,
-      ).timeout(const Duration(seconds: 15),
-              onTimeout: () => throw TimeoutException(
-                  'Share sheet did not complete within 15s — same hang, '
-                  'not Stripe-specific'));
-      if (mounted) {
-        setState(() => _debugStripeStatus = 'Share sheet result: $result');
-      }
-    } catch (e) {
-      if (mounted) setState(() => _debugStripeStatus = 'Share error: $e');
-    }
-  }
-
-  // TODO(debug): asks native iOS code directly whether AppDelegate.window is
-  // populated and what Stripe's own presenter-finding logic would resolve to
-  // — see AppDelegate.swift's "debug/native_diagnostics" channel. Gives a
-  // definitive yes/no on the window-nil theory without needing a Mac/device
-  // console. Remove once the "sheet never appears" hang is root-caused.
-  static const _debugChannel = MethodChannel('debug/native_diagnostics');
-
-  Future<void> _debugCheckWindowState(BuildContext context) async {
-    setState(() => _debugStripeStatus = 'Checking native window state...');
-    try {
-      final result = await _debugChannel
-          .invokeMethod<Map>('checkWindowState')
-          .timeout(const Duration(seconds: 5));
-      if (mounted) {
-        setState(() => _debugStripeStatus = result.toString());
-      }
-    } catch (e) {
-      if (mounted) setState(() => _debugStripeStatus = 'Diagnostic error: $e');
-    }
   }
 
   Future<void> _openCheckout(
@@ -149,39 +77,13 @@ class _MembershipScreenState extends State<MembershipScreen> {
     // Shown only now that the checkout sheet has fully closed (see
     // _openCheckout) — Stripe's presentPaymentSheet() must never run while
     // another Flutter modal is still open/mid-transition.
-    final statusNotifier = ValueNotifier<String?>(null);
     showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => PopScope(
+      builder: (_) => const PopScope(
         canPop: false,
         child: Center(
-          child: Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: AppColors.card,
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const CircularProgressIndicator(color: AppColors.primary),
-                ValueListenableBuilder<String?>(
-                  valueListenable: statusNotifier,
-                  builder: (_, status, __) => status == null
-                      ? const SizedBox()
-                      : Padding(
-                          padding: const EdgeInsets.only(top: 12),
-                          child: Text(status,
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                  fontSize: 12,
-                                  color: AppColors.textSecondary)),
-                        ),
-                ),
-              ],
-            ),
-          ),
+          child: CircularProgressIndicator(color: AppColors.primary),
         ),
       ),
     );
@@ -200,11 +102,6 @@ class _MembershipScreenState extends State<MembershipScreen> {
           currency: 'sgd',
           cardRegion: cardRegion,
           cardBrand: cardBrand,
-          // TODO(debug): temporary status breadcrumbs to localize the Stripe
-          // "sheet never appears" hang live on a test device, without waiting
-          // on Crashlytics' timeout + next-launch upload delay. Remove once
-          // root-caused.
-          onStep: (step) => statusNotifier.value = step,
         );
         paymentRef = payment.paymentIntentId;
         feeAmount = payment.feeAmount;
@@ -343,43 +240,8 @@ class _MembershipScreenState extends State<MembershipScreen> {
     final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
     return Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: AppBar(
-        title: const Text('Membership Plans'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.bug_report_outlined),
-            tooltip: 'Debug: test Stripe sheet directly',
-            onPressed: () => _debugTestStripeDirectly(context),
-          ),
-          IconButton(
-            icon: const Icon(Icons.ios_share),
-            tooltip: 'Debug: test native share sheet (non-Stripe)',
-            onPressed: () => _debugTestShareSheet(context),
-          ),
-          IconButton(
-            icon: const Icon(Icons.window_outlined),
-            tooltip: 'Debug: check native window state',
-            onPressed: () => _debugCheckWindowState(context),
-          ),
-        ],
-      ),
-      body: uid.isEmpty
-          ? const SizedBox()
-          : Column(
-              children: [
-                if (_debugStripeStatus != null)
-                  Container(
-                    width: double.infinity,
-                    color: Colors.black87,
-                    padding: const EdgeInsets.all(12),
-                    child: Text(
-                      'Stripe debug: $_debugStripeStatus',
-                      style: const TextStyle(color: Colors.white, fontSize: 13),
-                    ),
-                  ),
-                Expanded(child: _buildPlansBody(uid)),
-              ],
-            ),
+      appBar: AppBar(title: const Text('Membership Plans')),
+      body: uid.isEmpty ? const SizedBox() : _buildPlansBody(uid),
     );
   }
 
@@ -1223,7 +1085,7 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
               child: OutlinedButton.icon(
                 onPressed: _processing ? null : _payViaQr,
                 icon: const Icon(Icons.qr_code_2_outlined, size: 18),
-                label: const Text('Pay via QR Code'),
+                label: const Text('Pay via QR Code / UEN'),
               ),
             ),
           ],
@@ -1284,7 +1146,7 @@ class _CardTierToggle extends StatelessWidget {
   }
 }
 
-// ── Pay via QR code ──────────────────────────────────────────────────────────
+// ── Pay via QR code / UEN ───────────────────────────────────────────────────
 
 class _QrPaySheet extends StatefulWidget {
   final MembershipPlanModel plan;
@@ -1299,16 +1161,23 @@ class _QrPaySheet extends StatefulWidget {
 
 class _QrPaySheetState extends State<_QrPaySheet> {
   bool _submitting = false;
+  // 'qr' or 'uen' — defaulted once config loads (see build()); only shown
+  // as a choice when admin has configured both.
+  String? _method;
 
   Future<void> _submit() async {
     setState(() => _submitting = true);
     try {
+      final methodLabel = _method == 'uen' ? 'PayNow UEN' : 'QR Code';
       await QrPaymentService.submitRequest(
         planName: widget.plan.name,
         credits: widget.plan.credits,
         amount: widget.amount,
         validityDays: widget.plan.validityDays,
-        note: widget.coupon != null ? 'Coupon: ${widget.coupon}' : '',
+        note: [
+          'Method: $methodLabel',
+          if (widget.coupon != null) 'Coupon: ${widget.coupon}',
+        ].join(' · '),
       );
       if (mounted) {
         AppToast.success(context,
@@ -1346,21 +1215,25 @@ class _QrPaySheetState extends State<_QrPaySheet> {
         builder: (context, snap) {
           final imageUrl = snap.data?['imageUrl']?.toString() ?? '';
           final caption = snap.data?['caption']?.toString() ?? '';
+          final uen = snap.data?['uen']?.toString() ?? '';
           if (snap.connectionState == ConnectionState.waiting) {
             return const SizedBox(
                 height: 200,
                 child: Center(
                     child: CircularProgressIndicator(color: AppColors.primary)));
           }
-          if (imageUrl.isEmpty) {
+          if (imageUrl.isEmpty && uen.isEmpty) {
             return const SizedBox(
               height: 120,
               child: Center(
-                child: Text('QR payment is not set up yet — ask admin.',
+                child: Text('QR/UEN payment is not set up yet — ask admin.',
                     style: TextStyle(color: AppColors.textSecondary)),
               ),
             );
           }
+          _method ??= imageUrl.isNotEmpty ? 'qr' : 'uen';
+          final showToggle = imageUrl.isNotEmpty && uen.isNotEmpty;
+
           return Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1370,24 +1243,77 @@ class _QrPaySheetState extends State<_QrPaySheet> {
                       fontSize: 17,
                       fontWeight: FontWeight.w700,
                       color: AppColors.textPrimary)),
-              const SizedBox(height: 4),
-              Text(
-                  caption.isNotEmpty
-                      ? caption
-                      : 'Scan with your banking app to pay',
-                  style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
               const SizedBox(height: 16),
-              Center(
-                child: Container(
-                  padding: const EdgeInsets.all(12),
+              if (showToggle) ...[
+                _CardTierToggle(
+                  options: const {'qr': 'QR Code', 'uen': 'PayNow UEN'},
+                  value: _method!,
+                  onChanged: (v) => setState(() => _method = v),
+                ),
+                const SizedBox(height: 16),
+              ],
+              if (_method == 'qr' && imageUrl.isNotEmpty) ...[
+                Text(
+                    caption.isNotEmpty
+                        ? caption
+                        : 'Scan with your banking app to pay',
+                    style: const TextStyle(
+                        fontSize: 13, color: AppColors.textSecondary)),
+                const SizedBox(height: 16),
+                Center(
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.card,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: AppColors.divider),
+                    ),
+                    child: Image.network(imageUrl, height: 240),
+                  ),
+                ),
+              ] else if (_method == 'uen' && uen.isNotEmpty) ...[
+                const Text('PayNow to this UEN in your banking app',
+                    style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                const SizedBox(height: 16),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 12),
                   decoration: BoxDecoration(
                     color: AppColors.card,
                     borderRadius: BorderRadius.circular(14),
                     border: Border.all(color: AppColors.divider),
                   ),
-                  child: Image.network(imageUrl, height: 240),
+                  child: Column(
+                    children: [
+                      const Text('PayNow to UEN',
+                          style: TextStyle(
+                              fontSize: 13, color: AppColors.textSecondary)),
+                      const SizedBox(height: 6),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(uen,
+                              style: const TextStyle(
+                                  fontSize: 26,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 1,
+                                  color: AppColors.textPrimary)),
+                          const SizedBox(width: 4),
+                          IconButton(
+                            icon: const Icon(Icons.copy_rounded,
+                                size: 20, color: AppColors.primary),
+                            tooltip: 'Copy UEN',
+                            onPressed: () {
+                              Clipboard.setData(ClipboardData(text: uen));
+                              AppToast.success(context, 'UEN copied');
+                            },
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-              ),
+              ],
               const SizedBox(height: 16),
               Container(
                 padding: const EdgeInsets.all(12),

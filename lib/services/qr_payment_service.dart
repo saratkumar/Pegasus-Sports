@@ -6,12 +6,13 @@ import 'invoice_service.dart';
 import 'request_notification_service.dart';
 import 'user_service.dart';
 
-/// Backs the "pay via business QR code" flow: user scans the admin's
-/// configured QR (outside the app, in their own banking app), taps
-/// "I've Paid", and that queues a request an admin must manually confirm
-/// before the membership activates — there's no automated way to verify a
-/// QR/bank-transfer payment actually landed, so admin confirmation is the
-/// trust boundary here, not Stripe.
+/// Backs the "pay via QR code / UEN" flow: user either scans the admin's
+/// configured QR or pays the business's PayNow UEN directly (both outside
+/// the app, in their own banking app), taps "I've Paid", and that queues a
+/// request an admin must manually confirm before the membership activates
+/// — there's no automated way to verify a QR/PayNow/bank-transfer payment
+/// actually landed, so admin confirmation is the trust boundary here, not
+/// Stripe.
 class QrPaymentService {
   static final _configDoc =
       FirebaseFirestore.instance.collection('appMeta').doc('paymentQr');
@@ -27,10 +28,12 @@ class QrPaymentService {
   static Future<void> setConfig({
     required String imageUrl,
     required String caption,
+    required String uen,
   }) async {
     await _configDoc.set({
       'imageUrl': imageUrl,
       'caption': caption,
+      'uen': uen,
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }

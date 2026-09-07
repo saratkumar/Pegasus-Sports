@@ -4,10 +4,10 @@ import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
 import '../../utils/error_reporter.dart';
 
-/// Lets admin configure the business QR code shown to clients as an
-/// alternative to Stripe checkout — a plain image URL rather than an
-/// in-app upload, so no new Storage infrastructure is needed for what's
-/// normally a single, rarely-changing image (e.g. a bank/PayNow QR).
+/// Lets admin configure the business QR code and/or PayNow UEN shown to
+/// clients as an alternative to Stripe checkout. The QR image is a plain
+/// URL rather than an in-app upload, so no new Storage infrastructure is
+/// needed for what's normally a single, rarely-changing image.
 class PaymentQrScreen extends StatefulWidget {
   const PaymentQrScreen({super.key});
 
@@ -18,6 +18,7 @@ class PaymentQrScreen extends StatefulWidget {
 class _PaymentQrScreenState extends State<PaymentQrScreen> {
   final _urlCtrl = TextEditingController();
   final _captionCtrl = TextEditingController();
+  final _uenCtrl = TextEditingController();
   bool _saving = false;
   bool _loaded = false;
 
@@ -25,12 +26,13 @@ class _PaymentQrScreenState extends State<PaymentQrScreen> {
   void dispose() {
     _urlCtrl.dispose();
     _captionCtrl.dispose();
+    _uenCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _save() async {
-    if (_urlCtrl.text.trim().isEmpty) {
-      AppToast.error(context, 'Enter an image URL');
+    if (_urlCtrl.text.trim().isEmpty && _uenCtrl.text.trim().isEmpty) {
+      AppToast.error(context, 'Enter a QR image URL or a PayNow UEN');
       return;
     }
     setState(() => _saving = true);
@@ -38,8 +40,9 @@ class _PaymentQrScreenState extends State<PaymentQrScreen> {
       await QrPaymentService.setConfig(
         imageUrl: _urlCtrl.text.trim(),
         caption: _captionCtrl.text.trim(),
+        uen: _uenCtrl.text.trim(),
       );
-      if (mounted) AppToast.success(context, 'QR code updated');
+      if (mounted) AppToast.success(context, 'Payment settings updated');
     } catch (e, st) {
       if (mounted) {
         reportError(
@@ -57,7 +60,7 @@ class _PaymentQrScreenState extends State<PaymentQrScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Business QR Code')),
+      appBar: AppBar(title: const Text('QR Code / PayNow UEN')),
       body: StreamBuilder<Map<String, dynamic>?>(
         stream: QrPaymentService.streamConfig(),
         builder: (context, snap) {
@@ -65,23 +68,40 @@ class _PaymentQrScreenState extends State<PaymentQrScreen> {
             _loaded = true;
             _urlCtrl.text = snap.data?['imageUrl']?.toString() ?? '';
             _captionCtrl.text = snap.data?['caption']?.toString() ?? '';
+            _uenCtrl.text = snap.data?['uen']?.toString() ?? '';
           }
           return ListView(
             padding: EdgeInsets.fromLTRB(
                 16, 16, 16, 16 + MediaQuery.of(context).padding.bottom),
             children: [
               const Text(
-                "Shown to clients at checkout as an alternative to card "
-                "payment. They scan it in their own banking app, tap "
-                "\"I've Paid\" in the app, and you confirm the payment "
-                "landed under the Requests tab before it activates.",
+                "Shown to clients at checkout as \"Pay via QR Code / UEN\" — "
+                "an alternative to card payment. They pay outside the app "
+                "(scan the QR or PayNow to the UEN below in their own "
+                "banking app), tap \"I've Paid\", and you confirm the "
+                "payment landed under the Requests tab before it activates. "
+                "Set either or both — clients can choose between them if "
+                "both are set.",
                 style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
               ),
               const SizedBox(height: 20),
               TextFormField(
+                controller: _uenCtrl,
+                decoration: InputDecoration(
+                  labelText: 'PayNow UEN (optional)',
+                  helperText: 'e.g. "202204061H" — the business UEN for PayNow transfers',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                ),
+              ),
+              const SizedBox(height: 20),
+              const Divider(),
+              const SizedBox(height: 8),
+              TextFormField(
                 controller: _urlCtrl,
                 decoration: InputDecoration(
-                  labelText: 'QR Code Image URL',
+                  labelText: 'QR Code Image URL (optional)',
                   helperText: 'A direct link to the QR image (PNG/JPG)',
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
                   contentPadding:
@@ -92,7 +112,7 @@ class _PaymentQrScreenState extends State<PaymentQrScreen> {
               TextFormField(
                 controller: _captionCtrl,
                 decoration: InputDecoration(
-                  labelText: 'Caption (optional)',
+                  labelText: 'QR Caption (optional)',
                   helperText: 'e.g. "Scan with your banking app to pay via PayNow"',
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
                   contentPadding:
