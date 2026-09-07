@@ -7,6 +7,29 @@ import UIKit
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    // Confirmed via an on-device diagnostic: in this Scene-based app (see
+    // Info.plist's UIApplicationSceneManifest), applicationDidBecomeActive
+    // never actually runs (or runs before the scene's window exists) — the
+    // legacy `self.window` property stayed nil even with that hook in
+    // place. Rather than guess another specific lifecycle callback,
+    // populate it the moment ANY window actually becomes visible — this
+    // doesn't depend on lifecycle ordering at all, only on the one event
+    // that must eventually happen for the app to be usable. flutter_stripe's
+    // iOS plugin (stripe_ios's StripeSdk.swift) still looks up the
+    // presenting view controller via `UIApplication.shared.delegate?
+    // .window`; when that's nil it silently presents from a brand-new,
+    // disconnected UIViewController instead, which is a silent UIKit
+    // no-op — no crash, no error, the sheet never renders. This keeps that
+    // legacy lookup working without touching Flutter's own Scene-based
+    // window management.
+    NotificationCenter.default.addObserver(
+      forName: UIWindow.didBecomeVisibleNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] notification in
+      guard let self = self, self.window == nil else { return }
+      self.window = notification.object as? UIWindow
+    }
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
@@ -78,28 +101,6 @@ import UIKit
         ]
         result(diagnostics)
       }
-    }
-  }
-
-  // Info.plist declares UIApplicationSceneManifest, so this app's real
-  // window lives on a UIWindowScene — the legacy `AppDelegate.window`
-  // property is never populated by Flutter/UIKit in that setup and stays
-  // nil. Some plugins (e.g. flutter_stripe's iOS implementation of
-  // presentPaymentSheet, in stripe_ios's StripeSdk.swift) still look up
-  // the presenting view controller via `UIApplication.shared.delegate?
-  // .window`, exactly as if this were a pre-Scene app. When that's nil,
-  // Stripe silently falls back to presenting from a brand-new, disconnected
-  // UIViewController — presenting from a view controller with no window
-  // is a silent no-op in UIKit: no crash, no error, the completion handler
-  // never fires, and the sheet never renders. Populating `self.window`
-  // here from the connected scene keeps that legacy lookup working without
-  // touching Flutter's own Scene-based window management.
-  override func applicationDidBecomeActive(_ application: UIApplication) {
-    super.applicationDidBecomeActive(application)
-    if self.window == nil {
-      self.window = application.connectedScenes
-        .compactMap { ($0 as? UIWindowScene)?.windows.first }
-        .first
     }
   }
 }
