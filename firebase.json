@@ -43,7 +43,7 @@
   "hosting": [
     {
       "target": "shop",
-      "public": "web-widget/dist",
+      "public": "build/web_shop",
       "ignore": ["firebase.json", "**/.*"]
     },
     {

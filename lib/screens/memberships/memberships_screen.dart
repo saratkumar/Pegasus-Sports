@@ -17,6 +17,7 @@ import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
 import '../../utils/error_reporter.dart';
 import '../../utils/plan_category_style.dart';
+import '../../utils/require_login.dart';
 import '../../utils/stripe_fee_estimator.dart';
 
 class MembershipScreen extends StatefulWidget {
@@ -32,11 +33,22 @@ class _MembershipScreenState extends State<MembershipScreen> {
   @override
   void initState() {
     super.initState();
-    MembershipPlanService.ensureSeeded();
+    // Fire-and-forget, but must not crash the screen if it fails: an
+    // anonymous web-shop visitor is isSignedIn() but not isAdmin(), so if
+    // the collection were ever genuinely empty, the seed write would be
+    // denied by firestore.rules. On an already-seeded catalog (the normal
+    // case) this never attempts a write at all.
+    MembershipPlanService.ensureSeeded().catchError((_) {});
   }
 
   Future<void> _openCheckout(
       BuildContext context, MembershipPlanModel plan) async {
+    // Public web-embed visitors can browse plans signed out — buying one is
+    // the action that actually needs a real identity. No-ops (returns true
+    // immediately) for anyone already properly signed in, mobile included.
+    if (!await requireRealSignIn(context)) return;
+    if (!context.mounted) return;
+
     // The checkout sheet only collects the coupon/card-tier choice and pops
     // with the result — it does NOT run the purchase itself. Stripe's
     // presentPaymentSheet() must never be called while another Flutter modal
@@ -237,15 +249,17 @@ class _MembershipScreenState extends State<MembershipScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    // Publicly browsable — no signed-in-uid gate here. A real identity is
+    // only required to actually purchase a plan (see requireRealSignIn in
+    // _openCheckout); anonymous/signed-out visitors still see the catalog.
     return Scaffold(
       backgroundColor: AppColors.bg,
       appBar: AppBar(title: const Text('Membership Plans')),
-      body: uid.isEmpty ? const SizedBox() : _buildPlansBody(uid),
+      body: _buildPlansBody(),
     );
   }
 
-  Widget _buildPlansBody(String uid) {
+  Widget _buildPlansBody() {
     return StreamBuilder<List<MembershipPlanModel>>(
               stream: MembershipPlanService.streamPlans(),
               builder: (context, planSnap) {

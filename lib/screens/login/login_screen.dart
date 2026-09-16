@@ -6,7 +6,6 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:crypto/crypto.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import '../../firebase_options.dart';
@@ -27,8 +26,20 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _signInWithGoogle() async {
     setState(() => _loading = true);
     try {
+      // google_sign_in's interactive signIn() doesn't work on Flutter Web
+      // (its web implementation is button-render/One Tap only) — go
+      // straight through Firebase's own popup flow instead, same as
+      // lib/web_admin/admin_web_app.dart's sign-in screen.
+      if (kIsWeb) {
+        final result = await FirebaseAuth.instance
+            .signInWithPopup(GoogleAuthProvider());
+        await _upsertUserAndFinish(result);
+        if (mounted) setState(() => _loading = false);
+        return;
+      }
+
       final googleSignIn = GoogleSignIn(
-        clientId: !kIsWeb && (Platform.isIOS || Platform.isMacOS)
+        clientId: Platform.isIOS || Platform.isMacOS
             ? DefaultFirebaseOptions.ios.iosClientId
             : null,
       );
@@ -124,56 +135,16 @@ class _LoginScreenState extends State<LoginScreen> {
     if (mounted) setState(() => _loading = false);
   }
 
-  /// Shared post-auth step for every sign-in provider: creates the Firestore
-  /// user doc on first login (consuming any pending invitation), or merges
-  /// updated profile fields on repeat logins. [displayName] lets a provider
-  /// (e.g. Apple, which Firebase doesn't populate `displayName` for) supply
-  /// the name explicitly instead of relying on `result.user!.displayName`.
+  /// Shared post-auth step for every sign-in provider — see
+  /// [UserService.upsertFromCredential] for what it does. [displayName] lets
+  /// a provider (e.g. Apple, which Firebase doesn't populate `displayName`
+  /// for) supply the name explicitly instead of relying on
+  /// `result.user!.displayName`.
   Future<void> _upsertUserAndFinish(
     UserCredential result, {
     String? displayName,
-  }) async {
-    final uid = result.user!.uid;
-    final email = result.user!.email ?? '';
-    final name = displayName ?? result.user!.displayName ?? '';
-    final photoUrl = result.user!.photoURL ?? '';
-
-    final userRef = FirebaseFirestore.instance.collection('users').doc(uid);
-    final existing = await userRef.get();
-
-    if (!existing.exists) {
-      // Check for an admin-created invitation for this email — role
-      // (including 'admin'/adminLevel) comes entirely from Firestore data,
-      // never from a hardcoded email list.
-      final invite = await UserService.consumeInvitation(email);
-
-      final role = invite?['role'] as String? ?? 'client';
-      final adminLevel = invite?['adminLevel'] as String?;
-
-      await userRef.set({
-        'email': email,
-        'name': (invite?['name'] as String?)?.isNotEmpty == true
-            ? invite!['name']
-            : name,
-        'photoUrl': photoUrl,
-        if ((invite?['phone'] as String?)?.isNotEmpty == true)
-          'phone': invite!['phone'],
-        'role': role,
-        if (adminLevel != null) 'adminLevel': adminLevel,
-        'adminPermissions': <String>[],
-        'credits': invite?['initialCredits'] as int? ?? 0,
-        'memberships': <Map<String, dynamic>>[],
-      });
-    } else {
-      // Update mutable profile fields only; role/adminLevel/credits are
-      // preserved as-is — Firestore is the sole source of truth for them.
-      await userRef.set({
-        'email': email,
-        if (name.isNotEmpty) 'name': name,
-        if (photoUrl.isNotEmpty) 'photoUrl': photoUrl,
-      }, SetOptions(merge: true));
-    }
-  }
+  }) =>
+      UserService.upsertFromCredential(result, displayName: displayName);
 
   String _generateNonce([int length = 32]) {
     const charset =

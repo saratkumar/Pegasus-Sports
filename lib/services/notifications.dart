@@ -106,6 +106,7 @@ class NotificationService {
   }
 
   static Future<void> showBookingConfirmed(String className) async {
+    if (kIsWeb) return;
     await notifications.show(
       DateTime.now().millisecondsSinceEpoch.remainder(100000),
       'Booking Confirmed!',
@@ -119,6 +120,7 @@ class NotificationService {
     DateTime bookingDate,
     String bookingTime,
   ) async {
+    if (kIsWeb) return;
     final timeParts = bookingTime.split(':');
     if (timeParts.length < 2) return;
     final hour = int.tryParse(timeParts[0]) ?? 0;

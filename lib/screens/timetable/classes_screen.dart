@@ -13,6 +13,7 @@ import '../../services/email_service.dart';
 import '../../services/notifications.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
+import '../../utils/require_login.dart';
 
 class ClassesScreen extends StatefulWidget {
   const ClassesScreen({super.key});
@@ -104,6 +105,13 @@ class _ClassesScreenState extends State<ClassesScreen> {
       BookingService.canBookClass(cls, uid);
 
   Future<void> _book(BuildContext context, ClassModel cls) async {
+    // Public web-embed visitors can browse the timetable signed out —
+    // booking is the action that actually needs a real identity. No-ops
+    // (returns true immediately) for anyone already properly signed in,
+    // mobile included. Guarded here rather than per-button since this is
+    // the single funnel every "Book"/"Book Now" path calls into.
+    if (!await requireRealSignIn(context)) return;
+    if (!context.mounted) return;
     final uid = FirebaseAuth.instance.currentUser!.uid;
 
     final result = await BookingService.bookClass(
@@ -175,6 +183,8 @@ class _ClassesScreenState extends State<ClassesScreen> {
   }
 
   Future<void> _joinWaitingList(BuildContext context, ClassModel cls) async {
+    if (!await requireRealSignIn(context)) return;
+    if (!context.mounted) return;
     final uid = FirebaseAuth.instance.currentUser!.uid;
     final classId = cls.effectiveId;
 

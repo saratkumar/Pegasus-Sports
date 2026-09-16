@@ -44,6 +44,59 @@ class UserService {
     });
   }
 
+  /// Creates the `users/{uid}` doc on first sign-in (consuming any pending
+  /// invitation), or merges updated profile fields on repeat sign-ins.
+  /// [displayName] lets a caller supply the name explicitly instead of
+  /// relying on `result.user!.displayName` (e.g. Apple, which Firebase
+  /// doesn't populate that field for). Shared by every sign-in entry point —
+  /// mobile's LoginScreen and the web shop's deferred sign-in prompt — so
+  /// the invitation/role logic lives in exactly one place.
+  static Future<void> upsertFromCredential(
+    UserCredential result, {
+    String? displayName,
+  }) async {
+    final uid = result.user!.uid;
+    final email = result.user!.email ?? '';
+    final name = displayName ?? result.user!.displayName ?? '';
+    final photoUrl = result.user!.photoURL ?? '';
+
+    final userRef = _db.collection('users').doc(uid);
+    final existing = await userRef.get();
+
+    if (!existing.exists) {
+      // Check for an admin-created invitation for this email — role
+      // (including 'admin'/adminLevel) comes entirely from Firestore data,
+      // never from a hardcoded email list.
+      final invite = await consumeInvitation(email);
+
+      final role = invite?['role'] as String? ?? 'client';
+      final adminLevel = invite?['adminLevel'] as String?;
+
+      await userRef.set({
+        'email': email,
+        'name': (invite?['name'] as String?)?.isNotEmpty == true
+            ? invite!['name']
+            : name,
+        'photoUrl': photoUrl,
+        if ((invite?['phone'] as String?)?.isNotEmpty == true)
+          'phone': invite!['phone'],
+        'role': role,
+        if (adminLevel != null) 'adminLevel': adminLevel,
+        'adminPermissions': <String>[],
+        'credits': invite?['initialCredits'] as int? ?? 0,
+        'memberships': <Map<String, dynamic>>[],
+      });
+    } else {
+      // Update mutable profile fields only; role/adminLevel/credits are
+      // preserved as-is — Firestore is the sole source of truth for them.
+      await userRef.set({
+        'email': email,
+        if (name.isNotEmpty) 'name': name,
+        if (photoUrl.isNotEmpty) 'photoUrl': photoUrl,
+      }, SetOptions(merge: true));
+    }
+  }
+
   static Future<List<UserModel>> getAllUsers() async {
     final snap = await _db.collection('users').get();
     return snap.docs
