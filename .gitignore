@@ -57,3 +57,7 @@ extensions/*.env
 /android/key.properties
 *.jks
 *.keystore
+
+**/node_modules
+
+**/dist
