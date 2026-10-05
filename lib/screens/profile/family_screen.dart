@@ -5,24 +5,35 @@ import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
 
 /// "My Family" — a parent's child profiles (aged 6–17). Children never sign
-/// in; the parent books for them from the Classes screen.
+/// in; the parent books for them from the Classes screen. [staffMode] is
+/// the admin view of a client's family (User Management): same screens,
+/// but consent is recorded on the parent's behalf.
 class FamilyScreen extends StatelessWidget {
   final String parentUid;
-  const FamilyScreen({super.key, required this.parentUid});
+  final String? parentName;
+  final bool staffMode;
+  const FamilyScreen({
+    super.key,
+    required this.parentUid,
+    this.parentName,
+    this.staffMode = false,
+  });
 
   Future<void> _openEditor(BuildContext context, [DependentModel? child]) =>
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (_) =>
-              _ChildEditorScreen(parentUid: parentUid, existing: child),
+          builder: (_) => _ChildEditorScreen(
+              parentUid: parentUid, existing: child, staffMode: staffMode),
         ),
       );
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('My Family')),
+      appBar: AppBar(
+          title: Text(
+              staffMode ? 'Family · ${parentName ?? 'Client'}' : 'My Family')),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _openEditor(context),
         backgroundColor: AppColors.primary,
@@ -101,7 +112,12 @@ class FamilyScreen extends StatelessWidget {
 class _ChildEditorScreen extends StatefulWidget {
   final String parentUid;
   final DependentModel? existing;
-  const _ChildEditorScreen({required this.parentUid, this.existing});
+  final bool staffMode;
+  const _ChildEditorScreen({
+    required this.parentUid,
+    this.existing,
+    this.staffMode = false,
+  });
 
   @override
   State<_ChildEditorScreen> createState() => _ChildEditorScreenState();
@@ -351,12 +367,18 @@ class _ChildEditorScreenState extends State<_ChildEditorScreen> {
                 activeColor: AppColors.primary,
                 contentPadding: EdgeInsets.zero,
                 controlAffinity: ListTileControlAffinity.leading,
-                title: const Text(
-                  'I am this child\'s parent or legal guardian. I consent to '
-                  'their participation in sessions and to the collection of '
-                  'the information above, and I accept the Terms & '
-                  'Conditions on their behalf.',
-                  style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                title: Text(
+                  widget.staffMode
+                      ? 'The parent or legal guardian has given consent for '
+                          'this child\'s participation and for the collection '
+                          'of the information above, and accepts the Terms & '
+                          'Conditions on their behalf.'
+                      : 'I am this child\'s parent or legal guardian. I consent '
+                          'to their participation in sessions and to the '
+                          'collection of the information above, and I accept '
+                          'the Terms & Conditions on their behalf.',
+                  style: const TextStyle(
+                      fontSize: 13, color: AppColors.textSecondary),
                 ),
               ),
             const SizedBox(height: 12),

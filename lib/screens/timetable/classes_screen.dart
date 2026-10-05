@@ -16,19 +16,13 @@ import '../../services/notifications.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
 import '../../utils/require_login.dart';
+import '../../widgets/attendee_picker.dart';
 
 class ClassesScreen extends StatefulWidget {
   const ClassesScreen({super.key});
 
   @override
   State<ClassesScreen> createState() => _ClassesScreenState();
-}
-
-/// Result of the "Who is this booking for?" picker — [child] null means the
-/// account holder themselves.
-class _AttendeeChoice {
-  final DependentModel? child;
-  const _AttendeeChoice(this.child);
 }
 
 class _ClassesScreenState extends State<ClassesScreen> {
@@ -77,83 +71,16 @@ class _ClassesScreenState extends State<ClassesScreen> {
             .map((c) => c.id!),
       };
 
-  /// Asks who the booking is for when the account has child profiles;
-  /// returns the account holder directly otherwise. [takenKeys] (see
-  /// [_familyKeys]) are shown as already booked. Null = cancelled.
-  Future<_AttendeeChoice?> _pickAttendee(
+  Future<AttendeeChoice?> _pickAttendee(
     BuildContext context, {
     required String action,
     Set<String> takenKeys = const {},
-  }) async {
-    if (_children.isEmpty) return const _AttendeeChoice(null);
-    final me = FirebaseAuth.instance.currentUser?.displayName ?? 'Me';
-    return showModalBottomSheet<_AttendeeChoice>(
-      context: context,
-      backgroundColor: AppColors.bg,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) {
-        Widget option({
-          required String title,
-          required String subtitle,
-          required IconData icon,
-          required bool enabled,
-          required VoidCallback onTap,
-        }) =>
-            ListTile(
-              enabled: enabled,
-              onTap: onTap,
-              leading: CircleAvatar(
-                backgroundColor: AppColors.primary.withValues(alpha: 0.12),
-                child: Icon(icon, color: AppColors.primary, size: 20),
-              ),
-              title: Text(title,
-                  style: const TextStyle(fontWeight: FontWeight.w600)),
-              subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
-            );
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
-                  child: Text('Who is this $action for?',
-                      style: const TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.textPrimary)),
-                ),
-                option(
-                  title: me,
-                  subtitle: takenKeys.contains('') ? 'Already booked' : 'Myself',
-                  icon: Icons.person,
-                  enabled: !takenKeys.contains(''),
-                  onTap: () => Navigator.pop(ctx, const _AttendeeChoice(null)),
-                ),
-                for (final c in _children)
-                  option(
-                    title: c.name,
-                    subtitle: takenKeys.contains(c.id)
-                        ? 'Already booked'
-                        : c.isEligibleJuniorOn(_selectedDate)
-                            ? 'Junior · age ${c.ageOn(_selectedDate)}'
-                            : 'Not eligible — juniors must be '
-                                '${DependentModel.minAge}–${DependentModel.maxAgeExclusive - 1}',
-                    icon: Icons.child_care,
-                    enabled: !takenKeys.contains(c.id) &&
-                        c.isEligibleJuniorOn(_selectedDate),
-                    onTap: () => Navigator.pop(ctx, _AttendeeChoice(c)),
-                  ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
+  }) =>
+      pickAttendee(context,
+          children: _children,
+          date: _selectedDate,
+          action: action,
+          takenKeys: takenKeys);
 
   static const _dayNames = [
     'Monday', 'Tuesday', 'Wednesday', 'Thursday',

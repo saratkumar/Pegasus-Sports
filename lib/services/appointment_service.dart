@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/admin_request_model.dart';
 import '../models/appointment_model.dart';
+import '../models/dependent_model.dart';
 import 'request_notification_service.dart';
 
 /// Backs the Appointments feature (one-on-one slots). The slot catalog
@@ -51,11 +52,13 @@ class AppointmentService {
 
   /// Reserves [slotId] as pending. Transactional against the slot doc's
   /// activeRequestId field so two clients tapping "Book" on the same slot
-  /// at once can't both succeed.
+  /// at once can't both succeed. [attendee] is the parent's child profile
+  /// the appointment is for (null = the account holder).
   static Future<void> requestBooking({
     required AppointmentSlotModel slot,
     required String userId,
     required String userName,
+    DependentModel? attendee,
   }) async {
     final slotRef = _slotsCol.doc(slot.id);
     final requestRef = _requestsCol.doc();
@@ -76,6 +79,8 @@ class AppointmentService {
         amount: 0,
         note: 'Coach: ${slot.coach} · ${slot.time}',
         createdAt: DateTime.now(),
+        attendeeId: attendee?.id,
+        attendeeName: attendee?.name,
       );
       tx.set(requestRef, request.toFirestore());
       tx.update(slotRef, {'activeRequestId': requestRef.id});
@@ -83,7 +88,8 @@ class AppointmentService {
     unawaited(RequestNotificationService.notifyAdminsOfNewRequest(
       typeLabel: 'Appointment Booking Request',
       requesterName: userName,
-      summary: '${slot.appointmentName} · ${slot.day} ${slot.time} · Coach: ${slot.coach}',
+      summary: '${slot.appointmentName} · ${slot.day} ${slot.time} · Coach: ${slot.coach}'
+          '${attendee == null ? '' : ' · for junior ${attendee.name}'}',
     ));
   }
 

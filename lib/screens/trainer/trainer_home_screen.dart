@@ -14,6 +14,7 @@ import '../../services/notifications.dart';
 import '../../services/request_notification_service.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
+import '../../widgets/junior_info_sheet.dart';
 import '../../utils/error_reporter.dart';
 
 class TrainerHomeScreen extends StatefulWidget {
@@ -634,6 +635,12 @@ class _TrainerClassCard extends StatelessWidget {
                   () => onSlotRequest(cls)),
               _btn(Icons.cancel_outlined, 'Cancel', AppColors.error,
                   () => onCancel(cls)),
+              _btn(Icons.medical_information_outlined, 'Juniors',
+                  const Color(0xFF7C4DFF),
+                  () => showSessionJuniorsSheet(context,
+                      classId: cls.effectiveId,
+                      className: cls.mode,
+                      date: date)),
             ],
           ),
         ],

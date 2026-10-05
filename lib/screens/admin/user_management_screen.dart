@@ -8,6 +8,9 @@ import '../../services/user_service.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
 import '../../utils/error_reporter.dart';
+import '../../models/dependent_model.dart';
+import '../../services/dependent_service.dart';
+import '../profile/family_screen.dart';
 
 class UserManagementScreen extends StatefulWidget {
   const UserManagementScreen({super.key});
@@ -655,6 +658,45 @@ class _UserEditSheetState extends State<_UserEditSheet> {
             _RoleSelector(
               selected: _role,
               onChanged: (r) => setState(() => _role = r),
+            ),
+            const SizedBox(height: 16),
+            StreamBuilder<List<DependentModel>>(
+              stream: DependentService.streamActive(widget.user.uid),
+              builder: (context, snap) {
+                final kids = snap.data ?? const <DependentModel>[];
+                return Card(
+                  margin: EdgeInsets.zero,
+                  color: AppColors.surface,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                  child: ListTile(
+                    leading: const Icon(Icons.family_restroom,
+                        color: AppColors.primary),
+                    title: const Text('Family',
+                        style: TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w600)),
+                    subtitle: Text(
+                        kids.isEmpty
+                            ? 'No children added'
+                            : kids
+                                .map((k) =>
+                                    '${k.name} (${k.ageOn()})${k.hasMedicalNotes ? ' ⚕' : ''}')
+                                .join(', '),
+                        style: const TextStyle(fontSize: 12)),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => FamilyScreen(
+                          parentUid: widget.user.uid,
+                          parentName: widget.user.name,
+                          staffMode: true,
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
             const SizedBox(height: 16),
             const Text('Admin-Granted Credits',

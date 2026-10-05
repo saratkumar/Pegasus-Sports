@@ -12,6 +12,7 @@ import '../../services/user_service.dart';
 import '../../services/waiting_list_service.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
+import '../../widgets/junior_info_sheet.dart';
 import '../../widgets/timeline_range_selector.dart' show formatWithWeekday;
 
 /// Google Calendar/Outlook-style month (default) or week view of scheduled
@@ -363,6 +364,12 @@ class _ClassRosterScreenState extends State<ClassRosterScreen> {
                   onBookForClient: _classesLoading
                       ? null
                       : () => _openBookForClient(_groups[i]),
+                  onShowJuniors: () => showSessionJuniorsSheet(
+                    context,
+                    classId: _groups[i].classId,
+                    className: _groups[i].className,
+                    date: _selectedDay,
+                  ),
                 ),
               ),
             ),
@@ -401,7 +408,12 @@ class _RosterEntry {
 class _GroupCard extends StatelessWidget {
   final _ClassGroup group;
   final VoidCallback? onBookForClient;
-  const _GroupCard({required this.group, this.onBookForClient});
+  final VoidCallback onShowJuniors;
+  const _GroupCard({
+    required this.group,
+    this.onBookForClient,
+    required this.onShowJuniors,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -454,18 +466,26 @@ class _GroupCard extends StatelessWidget {
             ],
           ),
           children: [
-            if (onBookForClient != null)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    onPressed: onBookForClient,
-                    icon: const Icon(Icons.person_add_alt_1, size: 16),
-                    label: const Text('Book for Client'),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              child: Wrap(
+                spacing: 4,
+                children: [
+                  if (onBookForClient != null)
+                    TextButton.icon(
+                      onPressed: onBookForClient,
+                      icon: const Icon(Icons.person_add_alt_1, size: 16),
+                      label: const Text('Book for Client'),
+                    ),
+                  TextButton.icon(
+                    onPressed: onShowJuniors,
+                    icon: const Icon(Icons.medical_information_outlined,
+                        size: 16),
+                    label: const Text('Juniors & medical info'),
                   ),
-                ),
+                ],
               ),
+            ),
             if (group.members.isEmpty)
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 16, vertical: 6),

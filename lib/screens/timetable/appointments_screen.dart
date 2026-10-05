@@ -3,9 +3,11 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../../models/admin_request_model.dart';
 import '../../models/appointment_model.dart';
 import '../../services/appointment_service.dart';
+import '../../services/dependent_service.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
 import '../../utils/error_reporter.dart';
+import '../../widgets/attendee_picker.dart';
 
 /// One-on-one appointment slots (e.g. personal training). Booking a slot
 /// reserves it as pending — a trainer/admin must acknowledge it (see
@@ -18,14 +20,25 @@ class AppointmentsScreen extends StatelessWidget {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
     try {
+      final children = await DependentService.getActive(user.uid);
+      if (!context.mounted) return;
+      final choice = await pickAttendee(
+        context,
+        children: children,
+        date: DateTime.now(),
+        action: 'appointment',
+      );
+      if (choice == null) return;
       await AppointmentService.requestBooking(
         slot: slot,
         userId: user.uid,
         userName: user.displayName ?? user.email ?? 'Client',
+        attendee: choice.child,
       );
       if (context.mounted) {
         AppToast.success(context,
-            'Requested — waiting for the coach to confirm ${slot.appointmentName}');
+            'Requested — waiting for the coach to confirm ${slot.appointmentName}'
+            '${choice.child == null ? '' : ' for ${choice.child!.name}'}');
       }
     } catch (e, st) {
       if (context.mounted) {

@@ -17,6 +17,10 @@ class AdminRequestModel {
   final DateTime? resolvedAt;
   final String? resolvedBy;
   final String? newTrainer; // set when status == 'reassigned'
+  // appointment_booking made by a parent for one of their child profiles
+  // (users/{requestedBy}/dependents/{attendeeId}).
+  final String? attendeeId;
+  final String? attendeeName;
 
   AdminRequestModel({
     this.id,
@@ -35,6 +39,8 @@ class AdminRequestModel {
     this.resolvedAt,
     this.resolvedBy,
     this.newTrainer,
+    this.attendeeId,
+    this.attendeeName,
   });
 
   factory AdminRequestModel.fromFirestore(DocumentSnapshot doc) {
@@ -56,6 +62,8 @@ class AdminRequestModel {
       resolvedAt: (data['resolvedAt'] as Timestamp?)?.toDate(),
       resolvedBy: data['resolvedBy'],
       newTrainer: data['newTrainer'],
+      attendeeId: data['attendeeId'],
+      attendeeName: data['attendeeName'],
     );
   }
 
@@ -75,5 +83,7 @@ class AdminRequestModel {
         if (resolvedAt != null) 'resolvedAt': Timestamp.fromDate(resolvedAt!),
         if (resolvedBy != null) 'resolvedBy': resolvedBy,
         if (newTrainer != null) 'newTrainer': newTrainer,
+        if (attendeeId != null) 'attendeeId': attendeeId,
+        if (attendeeName != null) 'attendeeName': attendeeName,
       };
 }

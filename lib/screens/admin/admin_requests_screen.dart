@@ -16,6 +16,7 @@ import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
 import '../../utils/error_reporter.dart';
 import '../../widgets/timeline_range_selector.dart';
+import '../../widgets/junior_info_sheet.dart';
 
 class AdminRequestsScreen extends StatefulWidget {
   const AdminRequestsScreen({super.key});
@@ -1145,8 +1146,21 @@ class _RequestCardState extends State<_RequestCard> {
             _info('Credits requested', '${req.amount}'),
           ] else if (req.type == 'appointment_booking') ...[
             _info('Client', req.requestedByName),
+            if (req.attendeeName != null)
+              _info('For junior', req.attendeeName!),
             _info('Appointment', req.className ?? '—'),
             _info('Day', req.sessionDate ?? '—'),
+            if (req.attendeeId != null)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () => showJuniorSheet(context,
+                      parentUid: req.requestedBy, childId: req.attendeeId!),
+                  icon: const Icon(Icons.medical_information_outlined,
+                      size: 16),
+                  label: const Text('Medical & emergency info'),
+                ),
+              ),
           ] else ...[
             _info('Trainer', req.requestedByName),
             _info('Class', req.className ?? '—'),
