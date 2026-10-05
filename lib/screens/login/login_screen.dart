@@ -3,11 +3,13 @@ import 'dart:io' show Platform;
 import 'dart:math';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:crypto/crypto.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../firebase_options.dart';
 import '../../services/user_service.dart';
 import '../../utils/app_colors.dart';
@@ -20,10 +22,42 @@ class LoginScreen extends StatefulWidget {
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
+const _termsUrl = 'https://psas-shop.web.app/terms.html';
+const _privacyUrl = 'https://psas-shop.web.app/privacy-policy.html';
+
 class _LoginScreenState extends State<LoginScreen> {
   bool _loading = false;
+  bool _agreedToTerms = false;
+  late final TapGestureRecognizer _termsTap = TapGestureRecognizer()
+    ..onTap = () => _openUrl(_termsUrl);
+  late final TapGestureRecognizer _privacyTap = TapGestureRecognizer()
+    ..onTap = () => _openUrl(_privacyUrl);
+
+  @override
+  void dispose() {
+    _termsTap.dispose();
+    _privacyTap.dispose();
+    super.dispose();
+  }
+
+  Future<void> _openUrl(String url) =>
+      launchUrl(Uri.parse(url), mode: LaunchMode.inAppBrowserView);
+
+  /// Sign-in is gated on the 18+ / Terms checkbox — tapping a provider button
+  /// before ticking it just explains why nothing happened.
+  bool _ensureAgreed() {
+    if (_agreedToTerms) return true;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+            'Please confirm you are 18 or older and agree to the Terms & Conditions.'),
+      ),
+    );
+    return false;
+  }
 
   Future<void> _signInWithGoogle() async {
+    if (!_ensureAgreed()) return;
     setState(() => _loading = true);
     try {
       // google_sign_in's interactive signIn() doesn't work on Flutter Web
@@ -71,6 +105,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _signInWithApple() async {
+    if (!_ensureAgreed()) return;
     setState(() => _loading = true);
     try {
       final rawNonce = _generateNonce();
@@ -220,7 +255,9 @@ class _LoginScreenState extends State<LoginScreen> {
                       _pill(Icons.notifications_outlined, 'Smart Reminders'),
                     ],
                   ),
-                  const SizedBox(height: 56),
+                  const SizedBox(height: 40),
+                  _termsCheckbox(),
+                  const SizedBox(height: 16),
                   if (_loading)
                     const CircularProgressIndicator(color: AppColors.primary)
                   else
@@ -245,6 +282,58 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _termsCheckbox() {
+    const linkStyle = TextStyle(
+      color: AppColors.primary,
+      fontWeight: FontWeight.w600,
+      decoration: TextDecoration.underline,
+    );
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 24,
+          height: 24,
+          child: Checkbox(
+            value: _agreedToTerms,
+            activeColor: AppColors.primary,
+            onChanged: _loading
+                ? null
+                : (v) => setState(() => _agreedToTerms = v ?? false),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: GestureDetector(
+            onTap: _loading
+                ? null
+                : () => setState(() => _agreedToTerms = !_agreedToTerms),
+            child: Text.rich(
+              TextSpan(
+                style: const TextStyle(
+                    color: AppColors.textSecondary, fontSize: 13, height: 1.4),
+                children: [
+                  const TextSpan(
+                      text: 'I confirm I am 18 years or older and agree to the '),
+                  TextSpan(
+                      text: 'Terms & Conditions',
+                      style: linkStyle,
+                      recognizer: _termsTap),
+                  const TextSpan(text: ' and '),
+                  TextSpan(
+                      text: 'Privacy Policy',
+                      style: linkStyle,
+                      recognizer: _privacyTap),
+                  const TextSpan(text: '.'),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
