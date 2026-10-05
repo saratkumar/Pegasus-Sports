@@ -1,10 +1,11 @@
-import 'dart:js_interop';
-
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import '../services/user_service.dart';
 import 'app_colors.dart';
 import 'error_reporter.dart';
+// dart:js_interop only compiles for web — mobile gets a no-op stub.
+import 'storage_access_stub.dart'
+    if (dart.library.js_interop) 'storage_access_web.dart';
 
 /// Ensures some Firestore-readable session exists before a public embed
 /// page (e.g. the web shop's membership/timetable embeds) mounts its real
@@ -40,24 +41,6 @@ Future<bool> requireRealSignIn(BuildContext context) async {
   return result ?? false;
 }
 
-@JS('document.requestStorageAccess')
-external JSPromise<JSAny?>? _requestStorageAccess();
-
-/// Best-effort request for Safari's Storage Access API before the sign-in
-/// popup — without it, Safari's cross-site iframe tracking prevention can
-/// block/evict the auth session's storage entirely. Silently ignored where
-/// unsupported (every non-Safari browser today, where calling the undefined
-/// JS function throws) or denied.
-Future<void> _tryRequestStorageAccess() async {
-  try {
-    final promise = _requestStorageAccess();
-    if (promise == null) return;
-    await promise.toDart;
-  } catch (_) {
-    // Unsupported or denied — sign-in still proceeds via signInWithPopup.
-  }
-}
-
 class _SignInSheet extends StatefulWidget {
   const _SignInSheet();
 
@@ -71,7 +54,7 @@ class _SignInSheetState extends State<_SignInSheet> {
   Future<void> _signIn() async {
     setState(() => _loading = true);
     try {
-      await _tryRequestStorageAccess();
+      await tryRequestStorageAccess();
       final result =
           await FirebaseAuth.instance.signInWithPopup(GoogleAuthProvider());
       await UserService.upsertFromCredential(result);
