@@ -6,6 +6,7 @@ import '../../models/class_model.dart';
 import '../../models/admin_request_model.dart';
 import '../../models/user_model.dart';
 import '../../services/class_service.dart';
+import '../../services/booking_service.dart';
 import '../../services/config_service.dart';
 import '../../services/user_service.dart';
 import '../../services/waiting_list_service.dart';
@@ -297,8 +298,12 @@ class _TrainerHomeScreenState extends State<TrainerHomeScreen> {
     );
     if (selected == null) return;
 
+    // Trainer bookings are for the adult account holder — junior packages
+    // never apply (see BookingService.creditRulesFor).
+    final rules = await BookingService.creditRulesFor(null);
     final hasCredits = await UserService.hasEnoughCredits(selected.uid,
-        allowedPlanNames: cls.allowedPlanNames);
+        allowedPlanNames: cls.allowedPlanNames,
+        excludedPlanNames: rules.excluded);
     if (!hasCredits) {
       if (!mounted) return;
       final req = await showDialog<bool>(
@@ -378,7 +383,9 @@ class _TrainerHomeScreenState extends State<TrainerHomeScreen> {
         'creditsUsed': 1,
         'creditSourceEntryId': sourceEntryId,
       });
-    }, allowedPlanNames: cls.allowedPlanNames);
+    },
+        allowedPlanNames: cls.allowedPlanNames,
+        excludedPlanNames: rules.excluded);
     unawaited(ConfigService.logActivityEvent(
       eventType: 'Booked',
       classId: cls.effectiveId,

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../models/waiting_list_model.dart';
+import '../../services/booking_service.dart';
 import '../../services/config_service.dart';
 import '../../services/user_service.dart';
 import '../../services/waiting_list_service.dart';
@@ -134,7 +135,9 @@ class _BookingsTab extends StatelessWidget {
         sessionDate: bookingDate,
         sessionTime: bt,
         userId: uid,
-        userName: FirebaseAuth.instance.currentUser?.displayName ?? uid,
+        userName: BookingService.attendeeLogName(
+            data['attendeeName'] as String?,
+            FirebaseAuth.instance.currentUser?.displayName ?? uid),
         bookedByRole: data['bookedByRole']?.toString() ?? 'client',
         creditsUsed: creditsUsed,
         bookingId: id,
@@ -266,6 +269,7 @@ class _BookingsTab extends StatelessWidget {
         : data['bookingDay']?.toString() ?? '-';
     final bookedByRole = data['bookedByRole']?.toString();
     final credits = data['creditsUsed'] as int? ?? 1;
+    final attendeeName = data['attendeeName'] as String?;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -330,6 +334,8 @@ class _BookingsTab extends StatelessWidget {
                       spacing: 12,
                       runSpacing: 6,
                       children: [
+                        if (attendeeName != null)
+                          _chip(Icons.child_care, 'For $attendeeName'),
                         _chip(Icons.calendar_today_outlined, dateStr),
                         _chip(Icons.schedule, time),
                         _chip(Icons.label_outline, type),

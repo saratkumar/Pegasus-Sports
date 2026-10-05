@@ -5,9 +5,11 @@ import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 import '../../models/coupon_model.dart';
+import '../../models/dependent_model.dart';
 import '../../models/membership_plan_model.dart';
 import '../../models/user_model.dart';
 import '../../services/coupon_service.dart';
+import '../../services/dependent_service.dart';
 import '../../services/invoice_service.dart';
 import '../../services/membership_plan_service.dart';
 import '../../services/payment_service.dart';
@@ -19,6 +21,7 @@ import '../../utils/error_reporter.dart';
 import '../../utils/plan_category_style.dart';
 import '../../utils/require_login.dart';
 import '../../utils/stripe_fee_estimator.dart';
+import '../profile/family_screen.dart';
 
 class MembershipScreen extends StatefulWidget {
   const MembershipScreen({super.key});
@@ -41,12 +44,49 @@ class _MembershipScreenState extends State<MembershipScreen> {
     MembershipPlanService.ensureSeeded().catchError((_) {});
   }
 
+  /// Junior packages can only be bought by a parent with at least one child
+  /// profile currently aged 6–17 — their credits can't be used for anyone
+  /// else (see BookingService.creditRulesFor). Offers to add a child if not.
+  Future<bool> _verifyJuniorEligible(BuildContext context) async {
+    final uid = FirebaseAuth.instance.currentUser!.uid;
+    final children = await DependentService.getActive(uid);
+    if (children.any((c) => c.isEligibleJuniorOn())) return true;
+    if (!context.mounted) return false;
+    final addChild = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Junior package'),
+        content: const Text(
+            'Junior packages are for children aged ${DependentModel.minAge}–17. '
+            'Add your child in My Family first — junior credits can only be '
+            'used to book them.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Add child')),
+        ],
+      ),
+    );
+    if (addChild == true && context.mounted) {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => FamilyScreen(parentUid: uid)),
+      );
+    }
+    return false;
+  }
+
   Future<void> _openCheckout(
       BuildContext context, MembershipPlanModel plan) async {
     // Public web-embed visitors can browse plans signed out — buying one is
     // the action that actually needs a real identity. No-ops (returns true
     // immediately) for anyone already properly signed in, mobile included.
     if (!await requireRealSignIn(context)) return;
+    if (!context.mounted) return;
+    if (plan.isJunior && !await _verifyJuniorEligible(context)) return;
     if (!context.mounted) return;
 
     // The checkout sheet only collects the coupon/card-tier choice and pops
@@ -708,6 +748,21 @@ class _PlanCard extends StatelessWidget {
                           style: const TextStyle(
                               fontSize: 12,
                               color: AppColors.textSecondary)),
+                      if (plan.isJunior) ...[
+                        const SizedBox(height: 4),
+                        const Row(
+                          children: [
+                            Icon(Icons.child_care,
+                                size: 13, color: AppColors.primary),
+                            SizedBox(width: 4),
+                            Text('Junior · for children 6–17',
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    color: AppColors.primary,
+                                    fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ],
                     ],
                   ),
                 ),

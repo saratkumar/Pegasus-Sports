@@ -3,8 +3,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 
 import '../models/class_model.dart';
+import '../models/dependent_model.dart';
 import 'class_service.dart';
 import 'config_service.dart';
+import 'membership_plan_service.dart';
 import 'user_service.dart';
 
 /// Why [BookingService.bookClass] refused to book — callers map each reason
@@ -15,8 +17,14 @@ enum BookingFailureReason {
   planNotAllowed,
   noCredits,
   classFull,
+  /// The child attendee is outside the 6–17 age range on the session date.
+  attendeeIneligible,
   unknown,
 }
+
+/// Which of the account holder's plans a booking may draw credit from,
+/// depending on who attends — see [BookingService.creditRulesFor].
+typedef CreditRules = ({Set<String> excluded, Set<String> preferred});
 
 /// Outcome of [BookingService.bookClass].
 class BookingResult {
@@ -43,11 +51,33 @@ class BookingResult {
 /// this code, so bundling them here would incorrectly notify an admin's
 /// device instead of the client's; callers own that concern themselves.
 class BookingService {
+  /// Junior packages ([MembershipPlanModel.isJunior]) are for children only:
+  /// when the account holder attends ([attendee] null) they're excluded
+  /// outright; when a child attends they're drawn from first, falling back
+  /// to the parent's other plans (parents may spend their own credits on
+  /// their children).
+  static Future<CreditRules> creditRulesFor(DependentModel? attendee) async {
+    final junior = await MembershipPlanService.getJuniorPlanNames();
+    return attendee == null
+        ? (excluded: junior, preferred: const <String>{})
+        : (excluded: const <String>{}, preferred: junior);
+  }
+
+  /// Name recorded in the activity log / roster for a booking — the child's
+  /// name tagged with the parent's when a child attends, so trainers see who
+  /// is actually in the room and whom to contact.
+  static String attendeeLogName(String? attendeeName, String parentName) =>
+      attendeeName == null ? parentName : '$attendeeName (Junior · $parentName)';
+
   /// See classes_screen.dart's original `_canBookClass` doc comment: an
   /// empty [ClassModel.allowedPlanNames] is unrestricted; otherwise [uid]
-  /// must hold an eligible plan (active or queued) or have unrestricted
-  /// admin-granted access.
-  static Future<bool> canBookClass(ClassModel cls, String uid) async {
+  /// must hold an eligible plan (active or queued), other than any in
+  /// [excludedPlanNames], or have unrestricted admin-granted access.
+  static Future<bool> canBookClass(
+    ClassModel cls,
+    String uid, {
+    Set<String> excludedPlanNames = const {},
+  }) async {
     if (cls.allowedPlanNames.isEmpty) return true;
     final user = await UserService.getUser(uid);
     if (user == null) return false;
@@ -55,6 +85,7 @@ class BookingService {
     final now = DateTime.now();
     return user.memberships.any((m) =>
         cls.allowedPlanNames.contains(m.planName) &&
+        !excludedPlanNames.contains(m.planName) &&
         ((m.isActive && m.endDate.isAfter(now)) || m.isQueued));
   }
 
@@ -66,8 +97,10 @@ class BookingService {
   /// Creates a booking for [targetUid] on [cls]/[date], deducting one credit
   /// from them. [bookedByUid]/[bookedByRole] record who actually initiated
   /// it ('client' for self-booking, 'admin' for admin-on-behalf-of-client).
-  /// Runs the same duplicate/plan-whitelist/credit/capacity guards
-  /// regardless of who's booking for whom.
+  /// [attendee] is one of [targetUid]'s child profiles when booking for a
+  /// child (null = the account holder attends). Runs the same
+  /// duplicate/plan-whitelist/credit/capacity guards regardless of who's
+  /// booking for whom.
   static Future<BookingResult> bookClass({
     required ClassModel cls,
     required DateTime date,
@@ -75,8 +108,14 @@ class BookingService {
     required String bookedByUid,
     required String bookedByRole,
     String? targetUserName,
+    DependentModel? attendee,
   }) async {
     final classId = cls.effectiveId;
+
+    if (attendee != null && !attendee.isEligibleJuniorOn(date)) {
+      return const BookingResult.failure(
+          BookingFailureReason.attendeeIneligible);
+    }
 
     try {
       // Duplicate check — no date range in Firestore to avoid composite index; filter in Dart
@@ -86,7 +125,10 @@ class BookingService {
           .where('classId', isEqualTo: classId)
           .get();
 
+      // Per attendee — a parent may book themselves and each child into the
+      // same session.
       final alreadyBooked = existingSnap.docs.any((d) {
+        if (d.data()['attendeeId'] != attendee?.id) return false;
         final bd = d['bookingDate'];
         if (bd == null) return false;
         final dt = (bd as Timestamp).toDate();
@@ -98,14 +140,17 @@ class BookingService {
         return const BookingResult.failure(BookingFailureReason.alreadyBooked);
       }
 
-      if (!await canBookClass(cls, targetUid)) {
+      final rules = await creditRulesFor(attendee);
+      if (!await canBookClass(cls, targetUid,
+          excludedPlanNames: rules.excluded)) {
         return const BookingResult.failure(BookingFailureReason.planNotAllowed);
       }
 
       // Credit check + capacity check in parallel
       final results = await Future.wait([
         UserService.hasEnoughCredits(targetUid,
-            allowedPlanNames: cls.allowedPlanNames),
+            allowedPlanNames: cls.allowedPlanNames,
+            excludedPlanNames: rules.excluded),
         ClassService.getBookingCount(classId, date),
       ]);
       final hasCredits = results[0] as bool;
@@ -138,8 +183,13 @@ class BookingService {
           'bookedByRole': bookedByRole,
           'creditsUsed': 1,
           'creditSourceEntryId': sourceEntryId,
+          if (attendee != null) 'attendeeId': attendee.id,
+          if (attendee != null) 'attendeeName': attendee.name,
         });
-      }, allowedPlanNames: cls.allowedPlanNames);
+      },
+          allowedPlanNames: cls.allowedPlanNames,
+          excludedPlanNames: rules.excluded,
+          preferredPlanNames: rules.preferred);
 
       unawaited(ConfigService.logActivityEvent(
         eventType: 'Booked',
@@ -148,7 +198,7 @@ class BookingService {
         sessionDate: date,
         sessionTime: cls.startTime,
         userId: targetUid,
-        userName: targetUserName ?? targetUid,
+        userName: attendeeLogName(attendee?.name, targetUserName ?? targetUid),
         bookedByRole: bookedByRole,
         bookingId: bookingRef.id,
       ));

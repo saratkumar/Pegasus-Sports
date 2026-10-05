@@ -593,6 +593,8 @@ class _BookForClientSheetState extends State<_BookForClientSheet> {
         BookingFailureReason.noCredits =>
           '${client.name} has no credits available',
         BookingFailureReason.classFull => 'Class is full',
+        BookingFailureReason.attendeeIneligible =>
+            'Attendee is not eligible for this session',
         BookingFailureReason.unknown =>
           'Booking failed: ${result.errorDetail ?? ''}',
       };

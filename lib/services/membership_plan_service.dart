@@ -21,6 +21,15 @@ class MembershipPlanService {
         .toList();
   }
 
+  /// Names of every plan flagged [MembershipPlanModel.isJunior] (active or
+  /// not — a retired junior plan's already-purchased credits must stay
+  /// junior-only). Purchased memberships only record the plan name, so
+  /// that's what junior-ness is matched on.
+  static Future<Set<String>> getJuniorPlanNames() async {
+    final snap = await _col.where('isJunior', isEqualTo: true).get();
+    return snap.docs.map((d) => (d.data()['name'] ?? '').toString()).toSet();
+  }
+
   static Future<String> createPlan(MembershipPlanModel plan) async {
     final ref = await _col.add(plan.toFirestore());
     return ref.id;
@@ -89,5 +98,6 @@ extension on MembershipPlanModel {
         features: features,
         order: order ?? this.order,
         isActive: isActive,
+        isJunior: isJunior,
       );
 }

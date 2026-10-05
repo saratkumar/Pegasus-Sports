@@ -195,14 +195,23 @@ class UserService {
   /// transaction since, unlike a flat pooled decrement, this branches on
   /// which bucket to draw from and can flip a queued plan to active — not
   /// safe as a bare increment under concurrent bookings.
+  ///
+  /// [excludedPlanNames] are never drawn from (junior packages when the
+  /// account holder books for themselves); [preferredPlanNames] are tried
+  /// first before any other eligible plan (junior packages when booking a
+  /// child) — see [BookingService.creditRulesFor].
   static Future<String?> deductCredit(
     String uid, {
     List<String> allowedPlanNames = const [],
+    Set<String> excludedPlanNames = const {},
+    Set<String> preferredPlanNames = const {},
   }) {
     final userRef = _db.collection('users').doc(uid);
     return _db.runTransaction<String?>((tx) => _selectAndDeductWithinTx(
         tx, userRef,
-        allowedPlanNames: allowedPlanNames));
+        allowedPlanNames: allowedPlanNames,
+        excludedPlanNames: excludedPlanNames,
+        preferredPlanNames: preferredPlanNames));
   }
 
   /// Runs [writeDoc] (typically one `tx.set` for a new booking or
@@ -214,27 +223,39 @@ class UserService {
   /// [writeDoc] is handed the resolved credit source entry id (null =
   /// drawn from the admin pool) to store alongside `creditsUsed` on the
   /// doc, so a later cancellation can refund it via [refundCredit].
-  /// [allowedPlanNames] — see [deductCredit].
+  /// [allowedPlanNames]/[excludedPlanNames]/[preferredPlanNames] — see
+  /// [deductCredit].
   static Future<void> deductCreditAndWrite(
     String uid,
     void Function(Transaction tx, String? sourceEntryId) writeDoc, {
     List<String> allowedPlanNames = const [],
+    Set<String> excludedPlanNames = const {},
+    Set<String> preferredPlanNames = const {},
   }) async {
     final userRef = _db.collection('users').doc(uid);
     await _db.runTransaction((tx) async {
       final source = await _selectAndDeductWithinTx(tx, userRef,
-          allowedPlanNames: allowedPlanNames);
+          allowedPlanNames: allowedPlanNames,
+          excludedPlanNames: excludedPlanNames,
+          preferredPlanNames: preferredPlanNames);
       writeDoc(tx, source);
     });
   }
 
-  static bool _isEligiblePlan(MembershipEntry m, List<String> allowedPlanNames) =>
-      allowedPlanNames.isEmpty || allowedPlanNames.contains(m.planName);
+  static bool _isEligiblePlan(
+    MembershipEntry m,
+    List<String> allowedPlanNames, [
+    Set<String> excludedPlanNames = const {},
+  ]) =>
+      !excludedPlanNames.contains(m.planName) &&
+      (allowedPlanNames.isEmpty || allowedPlanNames.contains(m.planName));
 
   static Future<String?> _selectAndDeductWithinTx(
     Transaction tx,
     DocumentReference<Map<String, dynamic>> userRef, {
     List<String> allowedPlanNames = const [],
+    Set<String> excludedPlanNames = const {},
+    Set<String> preferredPlanNames = const {},
   }) async {
     final snap = await tx.get(userRef);
     final data = snap.data();
@@ -247,11 +268,16 @@ class UserService {
     // (re-checked against `now`, not just `status`, since a rollover-lag
     // window can leave a stale 'active' entry past its endDate) and that
     // still has credit.
-    final activeWithCreditsIdx = memberships.indexWhere((m) =>
+    bool activeWithCredits(MembershipEntry m) =>
         m.isActive &&
         m.endDate.isAfter(now) &&
-        _isEligiblePlan(m, allowedPlanNames) &&
-        m.creditsRemaining > 0);
+        _isEligiblePlan(m, allowedPlanNames, excludedPlanNames) &&
+        m.creditsRemaining > 0;
+    var activeWithCreditsIdx = memberships.indexWhere(
+        (m) => preferredPlanNames.contains(m.planName) && activeWithCredits(m));
+    if (activeWithCreditsIdx == -1) {
+      activeWithCreditsIdx = memberships.indexWhere(activeWithCredits);
+    }
 
     if (activeWithCreditsIdx != -1) {
       final entry = memberships[activeWithCreditsIdx];
@@ -261,7 +287,15 @@ class UserService {
       return entry.id;
     }
 
-    final queuedIdx = _earliestQueuedWithCredits(memberships, allowedPlanNames);
+    var queuedIdx = preferredPlanNames.isEmpty
+        ? -1
+        : _earliestQueuedWithCredits(memberships, allowedPlanNames,
+            excludedPlanNames: excludedPlanNames,
+            onlyPlanNames: preferredPlanNames);
+    if (queuedIdx == -1) {
+      queuedIdx = _earliestQueuedWithCredits(memberships, allowedPlanNames,
+          excludedPlanNames: excludedPlanNames);
+    }
     if (queuedIdx != -1) {
       final promoted = memberships[queuedIdx];
       // Step down the entry this one chains behind — same planName only,
@@ -292,23 +326,25 @@ class UserService {
   /// Read-only precheck mirroring [deductCredit]'s bucket-selection logic,
   /// used to short-circuit the "no credits" UI message before attempting a
   /// booking. The transaction in [deductCredit] remains authoritative.
-  /// [allowedPlanNames] — see [deductCredit].
+  /// [allowedPlanNames]/[excludedPlanNames] — see [deductCredit].
   static Future<bool> hasEnoughCredits(
     String uid, {
     List<String> allowedPlanNames = const [],
+    Set<String> excludedPlanNames = const {},
   }) async {
     final user = await getUser(uid);
     if (user == null) return false;
     final now = DateTime.now();
 
     final hasActiveCredit = user.activeMemberships.any((m) =>
-        _isEligiblePlan(m, allowedPlanNames) &&
+        _isEligiblePlan(m, allowedPlanNames, excludedPlanNames) &&
         m.endDate.isAfter(now) &&
         m.creditsRemaining > 0);
     if (hasActiveCredit) return true;
 
-    final hasQueuedCredit = user.queuedMemberships.any(
-        (m) => _isEligiblePlan(m, allowedPlanNames) && m.creditsRemaining > 0);
+    final hasQueuedCredit = user.queuedMemberships.any((m) =>
+        _isEligiblePlan(m, allowedPlanNames, excludedPlanNames) &&
+        m.creditsRemaining > 0);
     if (hasQueuedCredit) return true;
 
     return user.credits > 0;
@@ -428,17 +464,21 @@ class UserService {
 
   /// Index of the queued entry — restricted to [allowedPlanNames] if
   /// non-empty — with the earliest startDate that still has credits left,
-  /// or -1 if none. Used by [deductCredit]'s pull-forward.
+  /// or -1 if none. Used by [deductCredit]'s pull-forward. [onlyPlanNames],
+  /// if given, further restricts the search to those plans.
   static int _earliestQueuedWithCredits(
     List<MembershipEntry> memberships,
-    List<String> allowedPlanNames,
-  ) {
+    List<String> allowedPlanNames, {
+    Set<String> excludedPlanNames = const {},
+    Set<String>? onlyPlanNames,
+  }) {
     final candidates = <MapEntry<int, MembershipEntry>>[];
     for (var i = 0; i < memberships.length; i++) {
       final m = memberships[i];
       if (m.isQueued &&
           m.creditsRemaining > 0 &&
-          _isEligiblePlan(m, allowedPlanNames)) {
+          (onlyPlanNames == null || onlyPlanNames.contains(m.planName)) &&
+          _isEligiblePlan(m, allowedPlanNames, excludedPlanNames)) {
         candidates.add(MapEntry(i, m));
       }
     }

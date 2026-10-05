@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/class_model.dart';
+import 'booking_service.dart';
 import 'config_service.dart';
 import 'email_service.dart';
 import 'user_service.dart';
@@ -142,6 +143,8 @@ class ClassCancellationService {
       final userDoc = await _usersCol.doc(uid).get();
       final userName = userDoc.data()?['name']?.toString() ?? uid;
       final userEmail = userDoc.data()?['email']?.toString() ?? '';
+      final attendeeName = data['attendeeName'] as String?;
+      final logName = BookingService.attendeeLogName(attendeeName, userName);
 
       if (credits > 0) {
         await UserService.refundCredit(uid,
@@ -155,7 +158,7 @@ class ClassCancellationService {
         sessionDate: bookingDate,
         sessionTime: bookingTime,
         userId: uid,
-        userName: userName,
+        userName: logName,
         bookedByRole: data['bookedByRole']?.toString() ?? 'client',
         creditsUsed: credits,
         bookingId: doc.id,
@@ -166,7 +169,9 @@ class ClassCancellationService {
           await EmailService.sendCancellationEmail(
             email: userEmail,
             clientName: userName,
-            className: className,
+            className: attendeeName == null
+                ? className
+                : '$className (for $attendeeName)',
             classDate: bookingDate,
             classTime: bookingTime,
             creditsRefunded: credits,

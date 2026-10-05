@@ -5,8 +5,10 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
 import '../../models/class_model.dart';
+import '../../models/dependent_model.dart';
 import '../../services/booking_service.dart';
 import '../../services/class_service.dart';
+import '../../services/dependent_service.dart';
 import '../../services/user_service.dart';
 import '../../services/waiting_list_service.dart';
 import '../../services/email_service.dart';
@@ -22,8 +24,136 @@ class ClassesScreen extends StatefulWidget {
   State<ClassesScreen> createState() => _ClassesScreenState();
 }
 
+/// Result of the "Who is this booking for?" picker — [child] null means the
+/// account holder themselves.
+class _AttendeeChoice {
+  final DependentModel? child;
+  const _AttendeeChoice(this.child);
+}
+
 class _ClassesScreenState extends State<ClassesScreen> {
   DateTime _selectedDate = DateTime.now();
+
+  // The signed-in parent's active child profiles — drives the attendee
+  // picker and per-person "already booked" state. Re-subscribed on auth
+  // changes since the web shop starts anonymous and signs in mid-session.
+  List<DependentModel> _children = [];
+  StreamSubscription<User?>? _authSub;
+  StreamSubscription<List<DependentModel>>? _childrenSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
+      _childrenSub?.cancel();
+      _childrenSub = null;
+      if (user == null || user.isAnonymous) {
+        if (mounted) setState(() => _children = []);
+        return;
+      }
+      _childrenSub = DependentService.streamActive(user.uid).listen(
+        (list) {
+          if (mounted) setState(() => _children = list);
+        },
+        onError: (_) {},
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _authSub?.cancel();
+    _childrenSub?.cancel();
+    super.dispose();
+  }
+
+  /// Keys identifying everyone this account can book for on the selected
+  /// date: '' for the account holder, plus each age-eligible child's id —
+  /// matched against bookings' `attendeeId` (absent = account holder).
+  Set<String> get _familyKeys => {
+        '',
+        ..._children
+            .where((c) => c.isEligibleJuniorOn(_selectedDate))
+            .map((c) => c.id!),
+      };
+
+  /// Asks who the booking is for when the account has child profiles;
+  /// returns the account holder directly otherwise. [takenKeys] (see
+  /// [_familyKeys]) are shown as already booked. Null = cancelled.
+  Future<_AttendeeChoice?> _pickAttendee(
+    BuildContext context, {
+    required String action,
+    Set<String> takenKeys = const {},
+  }) async {
+    if (_children.isEmpty) return const _AttendeeChoice(null);
+    final me = FirebaseAuth.instance.currentUser?.displayName ?? 'Me';
+    return showModalBottomSheet<_AttendeeChoice>(
+      context: context,
+      backgroundColor: AppColors.bg,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) {
+        Widget option({
+          required String title,
+          required String subtitle,
+          required IconData icon,
+          required bool enabled,
+          required VoidCallback onTap,
+        }) =>
+            ListTile(
+              enabled: enabled,
+              onTap: onTap,
+              leading: CircleAvatar(
+                backgroundColor: AppColors.primary.withValues(alpha: 0.12),
+                child: Icon(icon, color: AppColors.primary, size: 20),
+              ),
+              title: Text(title,
+                  style: const TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
+            );
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+                  child: Text('Who is this $action for?',
+                      style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textPrimary)),
+                ),
+                option(
+                  title: me,
+                  subtitle: takenKeys.contains('') ? 'Already booked' : 'Myself',
+                  icon: Icons.person,
+                  enabled: !takenKeys.contains(''),
+                  onTap: () => Navigator.pop(ctx, const _AttendeeChoice(null)),
+                ),
+                for (final c in _children)
+                  option(
+                    title: c.name,
+                    subtitle: takenKeys.contains(c.id)
+                        ? 'Already booked'
+                        : c.isEligibleJuniorOn(_selectedDate)
+                            ? 'Junior · age ${c.ageOn(_selectedDate)}'
+                            : 'Not eligible — juniors must be '
+                                '${DependentModel.minAge}–${DependentModel.maxAgeExclusive - 1}',
+                    icon: Icons.child_care,
+                    enabled: !takenKeys.contains(c.id) &&
+                        c.isEligibleJuniorOn(_selectedDate),
+                    onTap: () => Navigator.pop(ctx, _AttendeeChoice(c)),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
 
   static const _dayNames = [
     'Monday', 'Tuesday', 'Wednesday', 'Thursday',
@@ -93,18 +223,8 @@ class _ClassesScreenState extends State<ClassesScreen> {
     if (picked != null) setState(() => _selectedDate = picked);
   }
 
-  /// Classes with a non-empty [ClassModel.allowedPlanNames] can only be
-  /// booked by clients holding a plan on that whitelist (set by an admin
-  /// when creating/editing the class) — everyone else is blocked. An empty
-  /// whitelist (the default) is unrestricted, same as every class today. An
-  /// active admin-granted credit award (see [UserModel.hasUnrestrictedAccess])
-  /// always bypasses this gate, independent of whatever plan(s) the user
-  /// actually holds. Delegates to [BookingService.canBookClass] — kept as a
-  /// thin wrapper here since [_ClassCard]/[_CapacitySection] call it too.
-  Future<bool> _canBookClass(ClassModel cls, String uid) =>
-      BookingService.canBookClass(cls, uid);
-
-  Future<void> _book(BuildContext context, ClassModel cls) async {
+  Future<void> _book(
+      BuildContext context, ClassModel cls, Set<String> takenKeys) async {
     // Public web-embed visitors can browse the timetable signed out —
     // booking is the action that actually needs a real identity. No-ops
     // (returns true immediately) for anyone already properly signed in,
@@ -114,6 +234,12 @@ class _ClassesScreenState extends State<ClassesScreen> {
     if (!context.mounted) return;
     final uid = FirebaseAuth.instance.currentUser!.uid;
 
+    final choice =
+        await _pickAttendee(context, action: 'booking', takenKeys: takenKeys);
+    if (choice == null || !context.mounted) return;
+    final child = choice.child;
+    final forLabel = child == null ? '' : ' for ${child.name}';
+
     final result = await BookingService.bookClass(
       cls: cls,
       date: _selectedDate,
@@ -121,13 +247,19 @@ class _ClassesScreenState extends State<ClassesScreen> {
       bookedByUid: uid,
       bookedByRole: 'client',
       targetUserName: FirebaseAuth.instance.currentUser?.displayName ?? uid,
+      attendee: child,
     );
 
     if (!result.success) {
       if (!context.mounted) return;
       switch (result.reason!) {
         case BookingFailureReason.alreadyBooked:
-          AppToast.warning(context, "Already registered for ${cls.mode}");
+          AppToast.warning(
+              context, "Already registered$forLabel for ${cls.mode}");
+          break;
+        case BookingFailureReason.attendeeIneligible:
+          AppToast.error(context,
+              "${child?.name ?? 'This person'} must be ${DependentModel.minAge}–${DependentModel.maxAgeExclusive - 1} on the session date");
           break;
         case BookingFailureReason.planNotAllowed:
           AppToast.error(context,
@@ -158,7 +290,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
       try {
         await EmailService.sendBookingEmail(
           email: email,
-          className: cls.mode,
+          className: '${cls.mode}$forLabel',
           classTime: cls.startTime,
           classDate: _selectedDate,
           location: cls.location,
@@ -177,8 +309,8 @@ class _ClassesScreenState extends State<ClassesScreen> {
         cls.mode, _selectedDate, cls.startTime);
 
     if (context.mounted) {
-      AppToast.success(
-          context, '${cls.mode} booked for ${_formatDate(_selectedDate)}');
+      AppToast.success(context,
+          '${cls.mode} booked$forLabel for ${_formatDate(_selectedDate)}');
     }
   }
 
@@ -188,17 +320,26 @@ class _ClassesScreenState extends State<ClassesScreen> {
     final uid = FirebaseAuth.instance.currentUser!.uid;
     final classId = cls.effectiveId;
 
+    final choice = await _pickAttendee(context, action: 'waiting list spot');
+    if (choice == null || !context.mounted) return;
+    final child = choice.child;
+    final forLabel = child == null ? '' : ' for ${child.name}';
+
     // Check if already on waiting list
     final alreadyWaiting = await WaitingListService.isOnWaitingList(
-        classId, uid, _selectedDate);
+        classId, uid, _selectedDate,
+        attendeeId: child?.id);
     if (alreadyWaiting) {
       if (context.mounted) {
-        AppToast.warning(context, "Already on the waiting list for ${cls.mode}");
+        AppToast.warning(
+            context, "Already on the waiting list$forLabel for ${cls.mode}");
       }
       return;
     }
 
-    if (!await _canBookClass(cls, uid)) {
+    final rules = await BookingService.creditRulesFor(child);
+    if (!await BookingService.canBookClass(cls, uid,
+        excludedPlanNames: rules.excluded)) {
       if (context.mounted) {
         AppToast.error(context,
             "Your current plan doesn't cover ${cls.mode} — purchase an eligible plan to join the waiting list");
@@ -220,7 +361,8 @@ class _ClassesScreenState extends State<ClassesScreen> {
 
     // Check credits
     final hasCredits = await UserService.hasEnoughCredits(uid,
-        allowedPlanNames: cls.allowedPlanNames);
+        allowedPlanNames: cls.allowedPlanNames,
+        excludedPlanNames: rules.excluded);
     if (!hasCredits) {
       if (context.mounted) {
         AppToast.error(context,
@@ -272,11 +414,12 @@ class _ClassesScreenState extends State<ClassesScreen> {
       bookingTime: cls.startTime,
       className: cls.mode,
       allowedPlanNames: cls.allowedPlanNames,
+      attendee: child,
     );
 
     if (context.mounted) {
       AppToast.success(context,
-          "Added to waiting list for ${cls.mode}. 1 credit held.");
+          "Added to waiting list$forLabel for ${cls.mode}. 1 credit held.");
     }
   }
 
@@ -340,7 +483,8 @@ class _ClassesScreenState extends State<ClassesScreen> {
                     return _ClassCard(
                       item: cls,
                       selectedDate: _selectedDate,
-                      onBook: (ctx) => _book(ctx, cls),
+                      familyKeys: _familyKeys,
+                      onBook: (ctx, taken) => _book(ctx, cls, taken),
                       onJoinWaitingList: (ctx) =>
                           _joinWaitingList(ctx, cls),
                     );
@@ -533,12 +677,14 @@ class _DateCarouselState extends State<_DateCarousel> {
 class _ClassCard extends StatelessWidget {
   final ClassModel item;
   final DateTime selectedDate;
-  final Future<void> Function(BuildContext) onBook;
+  final Set<String> familyKeys;
+  final Future<void> Function(BuildContext, Set<String> takenKeys) onBook;
   final Future<void> Function(BuildContext) onJoinWaitingList;
 
   const _ClassCard({
     required this.item,
     required this.selectedDate,
+    required this.familyKeys,
     required this.onBook,
     required this.onJoinWaitingList,
   });
@@ -620,6 +766,7 @@ class _ClassCard extends StatelessWidget {
                   classId: item.effectiveId,
                   groupSize: item.effectiveCapacity(selectedDate).toString(),
                   selectedDate: selectedDate,
+                  familyKeys: familyKeys,
                   onBook: onBook,
                   onJoinWaitingList: onJoinWaitingList,
                 ),
@@ -663,13 +810,15 @@ class _CapacitySection extends StatefulWidget {
   final String classId;
   final String groupSize;
   final DateTime selectedDate;
-  final Future<void> Function(BuildContext) onBook;
+  final Set<String> familyKeys;
+  final Future<void> Function(BuildContext, Set<String> takenKeys) onBook;
   final Future<void> Function(BuildContext) onJoinWaitingList;
 
   const _CapacitySection({
     required this.classId,
     required this.groupSize,
     required this.selectedDate,
+    required this.familyKeys,
     required this.onBook,
     required this.onJoinWaitingList,
   });
@@ -681,11 +830,11 @@ class _CapacitySection extends StatefulWidget {
 class _CapacitySectionState extends State<_CapacitySection> {
   bool _booking = false;
 
-  Future<void> _handleBook() async {
+  Future<void> _handleBook(Set<String> takenKeys) async {
     if (_booking) return;
     setState(() => _booking = true);
     try {
-      await widget.onBook(context);
+      await widget.onBook(context, takenKeys);
     } finally {
       if (mounted) setState(() => _booking = false);
     }
@@ -715,8 +864,15 @@ class _CapacitySectionState extends State<_CapacitySection> {
           return !dt.isBefore(startOfDay) && dt.isBefore(endOfDay);
         }).toList();
         final booked = todayDocs.length;
-        final alreadyBooked = todayDocs
-            .any((d) => (d.data() as Map<String, dynamic>)['userId'] == currentUid);
+        // Who in this family is booked ('' = account holder, else child id)
+        // — only "Already Booked" once everyone is.
+        final takenKeys = todayDocs
+            .map((d) => d.data() as Map<String, dynamic>)
+            .where((data) => data['userId'] == currentUid)
+            .map((data) => (data['attendeeId'] as String?) ?? '')
+            .toSet();
+        final alreadyBooked = widget.familyKeys.every(takenKeys.contains);
+        final hasFamily = widget.familyKeys.length > 1;
         final capacity = int.tryParse(widget.groupSize) ?? 0;
         final isFull = capacity > 0 && booked >= capacity;
         final pct = capacity > 0 ? (booked / capacity).clamp(0.0, 1.0) : 0.0;
@@ -730,7 +886,10 @@ class _CapacitySectionState extends State<_CapacitySection> {
           ]),
           builder: (context, waitSnap) {
             final waiting = waitSnap.data?[0] as int? ?? 0;
-            final onWaitingList = waitSnap.data?[1] as bool? ?? false;
+            // Per-child waiting-list status is checked when joining — with
+            // a family, keep the button available for the others.
+            final onWaitingList =
+                !hasFamily && (waitSnap.data?[1] as bool? ?? false);
 
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -796,7 +955,8 @@ class _CapacitySectionState extends State<_CapacitySection> {
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
-                      onPressed: _booking ? null : _handleBook,
+                      onPressed:
+                          _booking ? null : () => _handleBook(takenKeys),
                       child: _booking
                           ? const SizedBox(
                               height: 18,

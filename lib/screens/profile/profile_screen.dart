@@ -3,6 +3,7 @@ import '../../models/user_model.dart';
 import '../../services/user_service.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
+import 'family_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   final UserModel userModel;
@@ -154,6 +155,31 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     )
                   : const Text('Save Changes',
                       style: TextStyle(fontWeight: FontWeight.w700)),
+            ),
+            const SizedBox(height: 28),
+            Card(
+              color: AppColors.card,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+                side: const BorderSide(color: AppColors.divider),
+              ),
+              child: ListTile(
+                leading: const Icon(Icons.family_restroom,
+                    color: AppColors.primary),
+                title: const Text('My Family',
+                    style: TextStyle(fontWeight: FontWeight.w600)),
+                subtitle: const Text('Add children (6–17) and book for them',
+                    style: TextStyle(fontSize: 12)),
+                trailing: const Icon(Icons.chevron_right,
+                    color: AppColors.textMuted),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        FamilyScreen(parentUid: widget.userModel.uid),
+                  ),
+                ),
+              ),
             ),
           ],
         ),

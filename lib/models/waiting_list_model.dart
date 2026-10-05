@@ -10,6 +10,10 @@ class WaitingListModel {
   final String className;
   final DateTime requestedAt;
   final String status; // 'waiting', 'admitted', 'expired'
+  // Set when a parent queues one of their child profiles — see
+  // DependentModel. [userId] stays the parent (whose credit is held).
+  final String? attendeeId;
+  final String? attendeeName;
 
   WaitingListModel({
     this.id,
@@ -21,6 +25,8 @@ class WaitingListModel {
     required this.className,
     required this.requestedAt,
     this.status = 'waiting',
+    this.attendeeId,
+    this.attendeeName,
   });
 
   factory WaitingListModel.fromFirestore(DocumentSnapshot doc) {
@@ -35,6 +41,8 @@ class WaitingListModel {
       className: data['className'] ?? '',
       requestedAt: (data['requestedAt'] as Timestamp).toDate(),
       status: data['status'] ?? 'waiting',
+      attendeeId: data['attendeeId'],
+      attendeeName: data['attendeeName'],
     );
   }
 
@@ -47,5 +55,7 @@ class WaitingListModel {
         'className': className,
         'requestedAt': Timestamp.fromDate(requestedAt),
         'status': status,
+        if (attendeeId != null) 'attendeeId': attendeeId,
+        if (attendeeName != null) 'attendeeName': attendeeName,
       };
 }

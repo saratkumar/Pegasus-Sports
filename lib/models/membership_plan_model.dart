@@ -11,6 +11,10 @@ class MembershipPlanModel {
   final List<String> features;
   final int order;
   final bool isActive;
+  // Junior package — its credits may only be used to book a child profile
+  // (aged 6–17), never the adult account holder. Matched by plan name at
+  // booking time, same as ClassModel.allowedPlanNames.
+  final bool isJunior;
 
   const MembershipPlanModel({
     this.id,
@@ -25,6 +29,7 @@ class MembershipPlanModel {
     this.features = const [],
     this.order = 0,
     this.isActive = true,
+    this.isJunior = false,
   });
 
   factory MembershipPlanModel.fromFirestore(String id, Map<String, dynamic> data) {
@@ -41,6 +46,7 @@ class MembershipPlanModel {
       features: List<String>.from(data['features'] ?? []),
       order: (data['order'] as num?)?.toInt() ?? 0,
       isActive: data['isActive'] ?? true,
+      isJunior: data['isJunior'] ?? false,
     );
   }
 
@@ -56,5 +62,6 @@ class MembershipPlanModel {
         'features': features,
         'order': order,
         'isActive': isActive,
+        'isJunior': isJunior,
       };
 }

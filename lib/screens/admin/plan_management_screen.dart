@@ -268,6 +268,7 @@ class _PlanFormScreenState extends State<_PlanFormScreen> {
   late final TextEditingController _featureInput;
   late List<String> _features;
   bool _isActive = true;
+  bool _isJunior = false;
   bool _saving = false;
 
   @override
@@ -286,6 +287,7 @@ class _PlanFormScreenState extends State<_PlanFormScreen> {
     _featureInput = TextEditingController();
     _features = List<String>.from(e?.features ?? []);
     _isActive = e?.isActive ?? true;
+    _isJunior = e?.isJunior ?? false;
   }
 
   @override
@@ -328,6 +330,7 @@ class _PlanFormScreenState extends State<_PlanFormScreen> {
       features: _features,
       order: 0,
       isActive: _isActive,
+      isJunior: _isJunior,
     );
 
     try {
@@ -468,6 +471,20 @@ class _PlanFormScreenState extends State<_PlanFormScreen> {
                       color: AppColors.textPrimary)),
               subtitle: const Text(
                   'Inactive plans are hidden from clients but keep working for members who already own them',
+                  style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _isJunior,
+              onChanged: (v) => setState(() => _isJunior = v),
+              activeThumbColor: const Color(0xFF00D4AA),
+              title: const Text('Junior package',
+                  style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary)),
+              subtitle: const Text(
+                  'Can only be bought by parents with a child profile (aged 6–17), and its credits can only be used to book that child',
                   style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
             ),
             const SizedBox(height: 8),

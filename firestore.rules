@@ -92,6 +92,19 @@ service cloud.firestore {
         )
       );
       allow delete: if isAdmin();
+
+      // Child profiles (DependentModel) — contain minors' medical notes, so
+      // unlike the parent doc above these are NOT readable by every
+      // signed-in user: only the parent, plus staff (trainers need medical
+      // and emergency info). Only the parent or an admin can change them.
+      match /dependents/{childId} {
+        allow read: if isSignedIn() && (request.auth.uid == uid || isStaff());
+        allow create, update: if isSignedIn() && (request.auth.uid == uid || isAdmin()) &&
+          request.resource.data.name is string &&
+          request.resource.data.name.size() > 0 &&
+          request.resource.data.dateOfBirth is timestamp;
+        allow delete: if isAdmin();
+      }
     }
 
     // ── Bookings / waiting list ───────────────────────────────────────────

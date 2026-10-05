@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../models/dependent_model.dart';
 import '../models/waiting_list_model.dart';
+import 'booking_service.dart';
 import 'config_service.dart';
 import 'email_service.dart';
 import 'user_service.dart';
@@ -8,8 +10,10 @@ import 'user_service.dart';
 class WaitingListService {
   static final _col = FirebaseFirestore.instance.collection('waitingList');
 
+  /// [attendeeId] — the child profile queued (null = the account holder).
   static Future<bool> isOnWaitingList(
-      String classId, String userId, DateTime date) async {
+      String classId, String userId, DateTime date,
+      {String? attendeeId}) async {
     final snap = await _col
         .where('classId', isEqualTo: classId)
         .where('userId', isEqualTo: userId)
@@ -17,6 +21,7 @@ class WaitingListService {
         .get();
 
     return snap.docs.any((doc) {
+      if (doc.data()['attendeeId'] != attendeeId) return false;
       final d = (doc['bookingDate'] as Timestamp).toDate();
       return d.year == date.year && d.month == date.month && d.day == date.day;
     });
@@ -36,7 +41,9 @@ class WaitingListService {
   }
 
   /// Joins the waiting list; deducts 1 credit from the user, atomically
-  /// with creating the waiting-list doc.
+  /// with creating the waiting-list doc. [attendee] is the child profile
+  /// being queued (null = the account holder) — [userName] is then stored
+  /// as the roster label from [BookingService.attendeeLogName].
   static Future<void> joinWaitingList({
     required String classId,
     required String userId,
@@ -45,16 +52,20 @@ class WaitingListService {
     required String bookingTime,
     required String className,
     List<String> allowedPlanNames = const [],
+    DependentModel? attendee,
   }) async {
+    final rules = await BookingService.creditRulesFor(attendee);
     final entry = WaitingListModel(
       classId: classId,
       userId: userId,
-      userName: userName,
+      userName: BookingService.attendeeLogName(attendee?.name, userName),
       bookingDate: bookingDate,
       bookingTime: bookingTime,
       className: className,
       requestedAt: DateTime.now(),
       status: 'waiting',
+      attendeeId: attendee?.id,
+      attendeeName: attendee?.name,
     );
     final entryRef = _col.doc();
     await UserService.deductCreditAndWrite(userId, (tx, sourceEntryId) {
@@ -62,7 +73,10 @@ class WaitingListService {
         ...entry.toFirestore(),
         'creditSourceEntryId': sourceEntryId,
       });
-    }, allowedPlanNames: allowedPlanNames);
+    },
+        allowedPlanNames: allowedPlanNames,
+        excludedPlanNames: rules.excluded,
+        preferredPlanNames: rules.preferred);
     unawaited(ConfigService.logActivityEvent(
       eventType: 'Joined Waitlist',
       classId: classId,
@@ -70,7 +84,7 @@ class WaitingListService {
       sessionDate: bookingDate,
       sessionTime: bookingTime,
       userId: userId,
-      userName: userName,
+      userName: entry.userName,
       bookedByRole: 'client',
     ));
   }
@@ -169,6 +183,8 @@ class WaitingListService {
         'bookedByRole': 'client',
         'creditsUsed': 0, // credit already deducted when joining waiting list
         'admittedFromWaitingList': true,
+        if (entry.attendeeId != null) 'attendeeId': entry.attendeeId,
+        if (entry.attendeeName != null) 'attendeeName': entry.attendeeName,
       });
 
       await doc.reference.update({'status': 'admitted'});
