@@ -33,17 +33,6 @@ class MembershipScreen extends StatefulWidget {
 class _MembershipScreenState extends State<MembershipScreen> {
   String? _selectedCategory;
 
-  @override
-  void initState() {
-    super.initState();
-    // Fire-and-forget, but must not crash the screen if it fails: an
-    // anonymous web-shop visitor is isSignedIn() but not isAdmin(), so if
-    // the collection were ever genuinely empty, the seed write would be
-    // denied by firestore.rules. On an already-seeded catalog (the normal
-    // case) this never attempts a write at all.
-    MembershipPlanService.ensureSeeded().catchError((_) {});
-  }
-
   /// Junior packages can only be bought by a parent with at least one child
   /// profile currently aged 6–17 — their credits can't be used for anyone
   /// else (see BookingService.creditRulesFor). Offers to add a child if not.

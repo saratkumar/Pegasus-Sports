@@ -14,12 +14,6 @@ class PlanManagementScreen extends StatefulWidget {
 }
 
 class _PlanManagementScreenState extends State<PlanManagementScreen> {
-  @override
-  void initState() {
-    super.initState();
-    MembershipPlanService.ensureSeeded();
-  }
-
   Future<void> _openForm(BuildContext context, [MembershipPlanModel? existing]) async {
     await Navigator.push(
       context,
