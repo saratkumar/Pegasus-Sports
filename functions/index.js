@@ -81,6 +81,46 @@ function computeCardFee(netAmount, cardRegion, cardBrand) {
 // publishableKey }. The publishable key is served from the
 // STRIPE_PUBLISHABLE_KEY secret (not compiled into the app) so it always
 // pairs with STRIPE_SECRET_KEY — test/live is switched server-side only.
+// ── junior packages ─────────────────────────────────────────────────────────
+// Mirrors the app's DependentModel/MembershipPlanModel.isJunior rule: a plan
+// flagged isJunior may only be bought by an account holding an active child
+// profile aged 6–17. Enforced here, before any charge, so it also covers
+// app versions released before the in-app check existed.
+const JUNIOR_MIN_AGE = 6;
+const JUNIOR_MAX_AGE_EXCLUSIVE = 18;
+
+function ageOn(dob, on) {
+  let age = on.getFullYear() - dob.getFullYear();
+  if (on.getMonth() < dob.getMonth() ||
+      (on.getMonth() === dob.getMonth() && on.getDate() < dob.getDate())) {
+    age--;
+  }
+  return age;
+}
+
+async function assertJuniorEligible(uid, planName) {
+  const db = admin.firestore();
+  const plans = await db.collection("membershipPlans")
+    .where("name", "==", planName).limit(1).get();
+  if (plans.empty || plans.docs[0].get("isJunior") !== true) return;
+
+  const children = await db.collection("users").doc(uid)
+    .collection("dependents").where("isActive", "==", true).get();
+  const now = new Date();
+  const eligible = children.docs.some((d) => {
+    const dob = d.get("dateOfBirth");
+    if (!dob) return false;
+    const age = ageOn(dob.toDate(), now);
+    return age >= JUNIOR_MIN_AGE && age < JUNIOR_MAX_AGE_EXCLUSIVE;
+  });
+  if (!eligible) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Junior packages are for children aged 6–17. Add your child in My Family first."
+    );
+  }
+}
+
 // Shared by createPaymentIntent (mobile PaymentSheet) and
 // createCheckoutSession (web Checkout) so both enforce identical validation
 // and server-side fee math. Returns the metadata to stamp on the
@@ -126,6 +166,7 @@ function preparePayment(request) {
 
 exports.createPaymentIntent = onCall({ secrets: ["STRIPE_SECRET_KEY", "STRIPE_PUBLISHABLE_KEY"] }, async (request) => {
   const { netAmount, currency, planName, feeAmount, grossAmount, metadata } = preparePayment(request);
+  await assertJuniorEligible(request.auth.uid, planName);
 
   const publishableKey = process.env.STRIPE_PUBLISHABLE_KEY;
   if (!publishableKey) {
@@ -161,6 +202,7 @@ const CHECKOUT_RETURN_PAGE = "https://psas-shop.web.app/checkout-complete.html";
 
 exports.createCheckoutSession = onCall({ secrets: ["STRIPE_SECRET_KEY"] }, async (request) => {
   const { netAmount, currency, planName, feeAmount, grossAmount, metadata } = preparePayment(request);
+  await assertJuniorEligible(request.auth.uid, planName);
 
   const stripe = getStripe();
   const session = await stripe.checkout.sessions.create({
@@ -365,6 +407,7 @@ exports.redeemFreeMembership = onCall(async (request) => {
   if (!planName || credits == null || validityDays == null || !couponCode) {
     throw new HttpsError("invalid-argument", "Missing required fields.");
   }
+  await assertJuniorEligible(request.auth.uid, planName);
 
   const db = admin.firestore();
   const uid = request.auth.uid;
