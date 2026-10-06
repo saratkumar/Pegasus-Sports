@@ -1271,7 +1271,8 @@ class _QrPaySheetState extends State<_QrPaySheet> {
       child: StreamBuilder<Map<String, dynamic>?>(
         stream: QrPaymentService.streamConfig(),
         builder: (context, snap) {
-          final imageUrl = snap.data?['imageUrl']?.toString() ?? '';
+          final imageUrl = QrPaymentService.directImageUrl(
+              snap.data?['imageUrl']?.toString() ?? '');
           final caption = snap.data?['caption']?.toString() ?? '';
           final uen = snap.data?['uen']?.toString() ?? '';
           if (snap.connectionState == ConnectionState.waiting) {

@@ -123,7 +123,7 @@ class _PaymentQrScreenState extends State<PaymentQrScreen> {
               ValueListenableBuilder<TextEditingValue>(
                 valueListenable: _urlCtrl,
                 builder: (context, value, _) {
-                  final url = value.text.trim();
+                  final url = QrPaymentService.directImageUrl(value.text);
                   if (url.isEmpty) return const SizedBox();
                   return Center(
                     child: Container(

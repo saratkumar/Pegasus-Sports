@@ -21,6 +21,18 @@ class QrPaymentService {
 
   // ── QR config (admin-managed) ───────────────────────────────────────────
 
+  /// Google Drive share links (`…/file/d/ID/view`, `…/open?id=ID`) point at
+  /// an HTML preview page, not the image, so Image.network shows nothing.
+  /// Rewrites them to Drive's direct image host (which also sends CORS
+  /// headers for the web shop); any other URL is returned unchanged.
+  static String directImageUrl(String url) {
+    final u = url.trim();
+    if (!u.contains('drive.google.com')) return u;
+    final id = RegExp(r'/file/d/([\w-]+)').firstMatch(u)?.group(1) ??
+        RegExp(r'[?&]id=([\w-]+)').firstMatch(u)?.group(1);
+    return id == null ? u : 'https://lh3.googleusercontent.com/d/$id';
+  }
+
   static Stream<Map<String, dynamic>?> streamConfig() {
     return _configDoc.snapshots().map((d) => d.data());
   }
@@ -31,7 +43,7 @@ class QrPaymentService {
     required String uen,
   }) async {
     await _configDoc.set({
-      'imageUrl': imageUrl,
+      'imageUrl': directImageUrl(imageUrl),
       'caption': caption,
       'uen': uen,
       'updatedAt': FieldValue.serverTimestamp(),
