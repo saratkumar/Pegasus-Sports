@@ -77,8 +77,11 @@ function computeCardFee(netAmount, cardRegion, cardBrand) {
 
 // ── createPaymentIntent ───────────────────────────────────────────────────────
 // Called before showing the Stripe payment sheet.
-// Returns { clientSecret, paymentIntentId, netAmount, feeAmount, grossAmount }
-exports.createPaymentIntent = onCall({ secrets: ["STRIPE_SECRET_KEY"] }, async (request) => {
+// Returns { clientSecret, paymentIntentId, netAmount, feeAmount, grossAmount,
+// publishableKey }. The publishable key is served from the
+// STRIPE_PUBLISHABLE_KEY secret (not compiled into the app) so it always
+// pairs with STRIPE_SECRET_KEY — test/live is switched server-side only.
+exports.createPaymentIntent = onCall({ secrets: ["STRIPE_SECRET_KEY", "STRIPE_PUBLISHABLE_KEY"] }, async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Must be signed in.");
   }
@@ -98,6 +101,11 @@ exports.createPaymentIntent = onCall({ secrets: ["STRIPE_SECRET_KEY"] }, async (
   // Fee math happens here, not on the client — the client only declares the
   // card tier, the server is the sole authority on the resulting charge.
   const { feeAmount, grossAmount } = computeCardFee(netAmount, cardRegion, cardBrand);
+
+  const publishableKey = process.env.STRIPE_PUBLISHABLE_KEY;
+  if (!publishableKey) {
+    throw new HttpsError("failed-precondition", "Stripe publishable key is not configured.");
+  }
 
   const stripe = getStripe();
   const paymentIntent = await stripe.paymentIntents.create({
@@ -121,6 +129,7 @@ exports.createPaymentIntent = onCall({ secrets: ["STRIPE_SECRET_KEY"] }, async (
     netAmount,
     feeAmount,
     grossAmount,
+    publishableKey,
   };
 });
 

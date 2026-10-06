@@ -6,29 +6,28 @@ import 'package:flutter/material.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 
 class PaymentService {
-  // Safe to include in client code. Swap pk_test_ → pk_live_ for production.
-  // Get yours from: https://dashboard.stripe.com/test/apikeys
-  static const _publishableKey =
-      'pk_test_51Tps5X5GDQ6NbhM7JIa90Yh2ce52faber57nbE9GJB4kZFS7QpxjF4nWO0RxNmWcs8kPNWAFX4vG2WcGKt5irYzu00nf4mQiQu';
-
   // Cloud Functions are deployed to asia-southeast1 (see functions/index.js
   // setGlobalOptions) — the default FirebaseFunctions.instance targets
   // us-central1 and would silently fail to find any of these functions.
   static final _functions =
       FirebaseFunctions.instanceFor(region: 'asia-southeast1');
 
-  static bool _initialized = false;
+  static String? _appliedKey;
 
   /// Initializes the Stripe SDK on first use instead of at app startup, so
   /// clients who never open the payment flow don't pay its memory/CPU cost.
-  static Future<void> _ensureInitialized() async {
-    if (_initialized) return;
+  /// [publishableKey] comes from the server (createPaymentIntent returns the
+  /// STRIPE_PUBLISHABLE_KEY secret) rather than being compiled in, so it
+  /// always matches the server's secret key and switching Stripe between
+  /// test and live needs no app release. Re-applied only if it changed.
+  static Future<void> _ensureInitialized(String publishableKey) async {
+    if (_appliedKey == publishableKey) return;
     FirebaseCrashlytics.instance.log('processPayment: applying Stripe settings');
-    Stripe.publishableKey = _publishableKey;
+    Stripe.publishableKey = publishableKey;
     await Stripe.instance.applySettings().timeout(const Duration(seconds: 10),
         onTimeout: () => throw TimeoutException(
             'Stripe.applySettings did not complete within 10s'));
-    _initialized = true;
+    _appliedKey = publishableKey;
   }
 
   /// Creates the PaymentIntent server-side (via the `createPaymentIntent`
@@ -58,8 +57,6 @@ class PaymentService {
     required String cardRegion,
     required String cardBrand,
   }) async {
-    await _ensureInitialized();
-
     // Breadcrumbs, not error reports — the known failure mode here (see
     // memberships_screen.dart's _confirm()) is the Stripe sheet silently
     // never appearing, with no exception thrown at all, so there's nothing
@@ -87,6 +84,12 @@ class PaymentService {
     final serverNetAmount = (data['netAmount'] as num).toDouble();
     final feeAmount = (data['feeAmount'] as num).toDouble();
     final grossAmount = (data['grossAmount'] as num).toDouble();
+    final publishableKey = data['publishableKey'] as String?;
+    if (publishableKey == null || publishableKey.isEmpty) {
+      throw StateError(
+          'Payments are not configured (missing Stripe publishable key)');
+    }
+    await _ensureInitialized(publishableKey);
 
     FirebaseCrashlytics.instance.log('processPayment: initializing payment sheet');
     await Stripe.instance
