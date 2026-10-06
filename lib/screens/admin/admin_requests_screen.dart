@@ -8,6 +8,7 @@ import '../../models/user_model.dart';
 import '../../services/user_service.dart';
 import '../../services/class_service.dart';
 import '../../services/config_service.dart';
+import '../../services/dependent_service.dart';
 import '../../services/notifications.dart';
 import '../../services/qr_payment_service.dart';
 import '../../services/request_notification_service.dart';
@@ -652,6 +653,8 @@ class _RequestCardState extends State<_RequestCard> {
         return 'Session Cancellation Request';
       case 'appointment_booking':
         return 'Appointment Booking Request';
+      case 'child_verification':
+        return 'Child Verification';
       default:
         return 'Slot Increase Request';
     }
@@ -672,6 +675,13 @@ class _RequestCardState extends State<_RequestCard> {
             .collection('appointmentSlots')
             .doc(req.classId)
             .update({'activeRequestId': null});
+      }
+
+      // Child profile approval — unlocks junior packages for this child.
+      if (req.type == 'child_verification' && req.attendeeId != null) {
+        await DependentService.setVerification(
+            req.requestedBy, req.attendeeId!,
+            approved: approved);
       }
 
       if (approved) {
@@ -728,6 +738,7 @@ class _RequestCardState extends State<_RequestCard> {
       final typeLabel = switch (req.type) {
         'credit_request' => 'Credit Request',
         'appointment_booking' => 'Appointment Booking',
+        'child_verification' => 'Child Verification',
         _ => 'Slot Increase',
       };
       // appointment_booking's sessionDate holds a weekday label ("Monday"),
@@ -1159,6 +1170,19 @@ class _RequestCardState extends State<_RequestCard> {
                   icon: const Icon(Icons.medical_information_outlined,
                       size: 16),
                   label: const Text('Medical & emergency info'),
+                ),
+              ),
+          ] else if (req.type == 'child_verification') ...[
+            _info('Parent', req.requestedByName),
+            _info('Child', req.attendeeName ?? '—'),
+            if (req.attendeeId != null)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () => showJuniorSheet(context,
+                      parentUid: req.requestedBy, childId: req.attendeeId!),
+                  icon: const Icon(Icons.badge_outlined, size: 16),
+                  label: const Text('View child details'),
                 ),
               ),
           ] else ...[

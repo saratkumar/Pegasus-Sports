@@ -76,6 +76,7 @@ Future<AttendeeChoice?> pickAttendee(
                       ? 'Already booked'
                       : c.isEligibleJuniorOn(date)
                           ? 'Junior · age ${c.ageOn(date)}'
+                              '${c.isVerified ? '' : ' · ${c.verificationLabel.toLowerCase()}'}'
                           : 'Not eligible — juniors must be '
                               '${DependentModel.minAge}–${DependentModel.maxAgeExclusive - 1}',
                   icon: Icons.child_care,

@@ -55,7 +55,8 @@ class FamilyScreen extends StatelessWidget {
               const Text(
                 'Add your children (aged ${DependentModel.minAge}–17) to book '
                 'classes for them using your account. Juniors can join any '
-                'class and can use your credits or a junior package.',
+                'class and can use your credits. Our staff approve each new '
+                'child before junior packages can be bought or used for them.',
                 style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
               ),
               const SizedBox(height: 16),
@@ -95,13 +96,18 @@ class FamilyScreen extends StatelessWidget {
             style: const TextStyle(fontWeight: FontWeight.w600)),
         subtitle: Text(
           eligible
-              ? 'Age $age${c.hasMedicalNotes ? ' · Medical notes added' : ''}'
+              ? 'Age $age · ${c.verificationLabel}'
+                  '${c.hasMedicalNotes ? ' · Medical notes added' : ''}'
               : age >= DependentModel.maxAgeExclusive
                   ? 'Age $age — now an adult, please create their own account'
                   : 'Age $age — can book from age ${DependentModel.minAge}',
           style: TextStyle(
               fontSize: 12,
-              color: eligible ? AppColors.textSecondary : AppColors.error),
+              color: !eligible || c.isRejected
+                  ? AppColors.error
+                  : c.isVerified
+                      ? AppColors.textSecondary
+                      : const Color(0xFFE08A00)),
         ),
         trailing: const Icon(Icons.chevron_right, color: AppColors.textMuted),
       ),
@@ -135,6 +141,12 @@ class _ChildEditorScreenState extends State<_ChildEditorScreen> {
   bool _saving = false;
 
   bool get _isEdit => widget.existing != null;
+
+  /// Once staff approve a child, only staff may change who they are —
+  /// otherwise a verified profile could be repurposed (also enforced in
+  /// firestore.rules).
+  bool get _identityLocked =>
+      !widget.staffMode && (widget.existing?.isVerified ?? false);
 
   @override
   void initState() {
@@ -209,10 +221,17 @@ class _ChildEditorScreenState extends State<_ChildEditorScreen> {
       if (_isEdit) {
         await DependentService.update(widget.parentUid, child);
       } else {
-        await DependentService.add(widget.parentUid, child);
+        await DependentService.add(widget.parentUid, child,
+            addedByStaff: widget.staffMode);
       }
       if (mounted) {
-        AppToast.success(context, _isEdit ? 'Saved' : '${child.name} added');
+        AppToast.success(
+            context,
+            _isEdit
+                ? 'Saved'
+                : widget.staffMode
+                    ? '${child.name} added and approved'
+                    : '${child.name} added — awaiting approval by our staff');
         Navigator.pop(context);
       }
     } catch (e) {
@@ -246,6 +265,67 @@ class _ChildEditorScreenState extends State<_ChildEditorScreen> {
     if (mounted) Navigator.pop(context);
   }
 
+  Future<void> _setVerification(bool approved) async {
+    setState(() => _saving = true);
+    try {
+      await DependentService.setVerification(
+          widget.parentUid, widget.existing!.id!,
+          approved: approved);
+      if (mounted) {
+        AppToast.success(context,
+            '${widget.existing!.name} ${approved ? 'approved' : 'rejected'}');
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      if (mounted) AppToast.error(context, 'Failed: $e');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Widget _statusBanner() {
+    final c = widget.existing!;
+    final color = c.isVerified
+        ? const Color(0xFF1A9E5C)
+        : c.isRejected
+            ? AppColors.error
+            : const Color(0xFFE08A00);
+    final text = c.isVerified
+        ? 'Approved by our staff. Contact us to change the name or date of birth.'
+        : c.isRejected
+            ? 'Not approved by our staff — please contact us.'
+            : 'Awaiting approval by our staff. You can still book classes for '
+                'this child with your own credits; junior packages unlock once '
+                'approved.';
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        children: [
+          Icon(
+              c.isVerified
+                  ? Icons.verified_outlined
+                  : c.isRejected
+                      ? Icons.block
+                      : Icons.hourglass_top,
+              color: color,
+              size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(text,
+                style: const TextStyle(
+                    fontSize: 13, color: AppColors.textPrimary)),
+          ),
+        ],
+      ),
+    );
+  }
+
   InputDecoration _decoration(String label, IconData icon, {String? hint}) =>
       InputDecoration(
         labelText: label,
@@ -276,8 +356,10 @@ class _ChildEditorScreenState extends State<_ChildEditorScreen> {
           padding: EdgeInsets.fromLTRB(
               16, 16, 16, 16 + MediaQuery.of(context).padding.bottom),
           children: [
+            if (_isEdit) _statusBanner(),
             TextFormField(
               controller: _name,
+              enabled: !_identityLocked,
               textCapitalization: TextCapitalization.words,
               decoration: _decoration('Child\'s full name', Icons.person_outline),
               validator: (v) =>
@@ -285,7 +367,7 @@ class _ChildEditorScreenState extends State<_ChildEditorScreen> {
             ),
             const SizedBox(height: 16),
             InkWell(
-              onTap: _pickDob,
+              onTap: _identityLocked ? null : _pickDob,
               borderRadius: BorderRadius.circular(10),
               child: InputDecorator(
                 decoration:
@@ -401,6 +483,30 @@ class _ChildEditorScreenState extends State<_ChildEditorScreen> {
                   : Text(_isEdit ? 'Save Changes' : 'Add Child',
                       style: const TextStyle(fontWeight: FontWeight.w700)),
             ),
+            if (widget.staffMode &&
+                _isEdit &&
+                !widget.existing!.isVerified) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: _saving ? null : () => _setVerification(false),
+                      style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.error),
+                      child: const Text('Reject'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: _saving ? null : () => _setVerification(true),
+                      child: const Text('Approve child'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       ),

@@ -38,9 +38,28 @@ class _MembershipScreenState extends State<MembershipScreen> {
   /// else (see BookingService.creditRulesFor). Offers to add a child if not.
   Future<bool> _verifyJuniorEligible(BuildContext context) async {
     final uid = FirebaseAuth.instance.currentUser!.uid;
-    final children = await DependentService.getActive(uid);
-    if (children.any((c) => c.isEligibleJuniorOn())) return true;
+    final children = (await DependentService.getActive(uid))
+        .where((c) => c.isEligibleJuniorOn())
+        .toList();
+    if (children.any((c) => c.isVerified)) return true;
     if (!context.mounted) return false;
+    if (children.any((c) => !c.isRejected)) {
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Awaiting approval'),
+          content: const Text(
+              'Your child\'s profile is waiting for approval by our staff. '
+              'You can buy junior packages once it\'s approved — we\'ll email '
+              'you when it is.'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx), child: const Text('OK')),
+          ],
+        ),
+      );
+      return false;
+    }
     final addChild = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(

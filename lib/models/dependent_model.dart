@@ -26,6 +26,11 @@ class DependentModel {
   final DateTime? consentAcceptedAt;
   final String consentTermsVersion;
   final bool isActive;
+  // Staff approval: 'pending' | 'verified' | 'rejected'. Junior packages can
+  // only be bought/used for a verified child; once verified the parent can
+  // no longer change name or date of birth (firestore.rules). Set only via
+  // DependentService.add/setVerification — never by toFirestore().
+  final String verificationStatus;
 
   const DependentModel({
     this.id,
@@ -38,6 +43,7 @@ class DependentModel {
     this.consentAcceptedAt,
     this.consentTermsVersion = consentVersion,
     this.isActive = true,
+    this.verificationStatus = 'pending',
   });
 
   /// Age in whole years on [on] (defaults to today).
@@ -59,6 +65,16 @@ class DependentModel {
 
   bool get hasMedicalNotes => medicalNotes.trim().isNotEmpty;
 
+  bool get isVerified => verificationStatus == 'verified';
+  bool get isRejected => verificationStatus == 'rejected';
+
+  /// Short status for parents/staff, e.g. "Pending approval".
+  String get verificationLabel => isVerified
+      ? 'Approved'
+      : isRejected
+          ? 'Not approved'
+          : 'Pending approval';
+
   factory DependentModel.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
     return DependentModel(
@@ -72,6 +88,8 @@ class DependentModel {
       consentAcceptedAt: (data['consentAcceptedAt'] as Timestamp?)?.toDate(),
       consentTermsVersion: data['consentTermsVersion'] ?? '',
       isActive: data['isActive'] ?? true,
+      // Profiles created before verification existed count as pending.
+      verificationStatus: data['verificationStatus'] ?? 'pending',
     );
   }
 

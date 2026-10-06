@@ -97,12 +97,41 @@ service cloud.firestore {
       // unlike the parent doc above these are NOT readable by every
       // signed-in user: only the parent, plus staff (trainers need medical
       // and emergency info). Only the parent or an admin can change them.
+      //
+      // verificationStatus ('pending' | 'verified' | 'rejected') gates junior
+      // packages, so only admins may set it: a parent can only create a
+      // child as pending (or, from app builds before verification existed,
+      // without the field — read as pending), never change it, and can no
+      // longer change name/dateOfBirth once the child is verified.
       match /dependents/{childId} {
+        function validChild() {
+          return request.resource.data.name is string &&
+            request.resource.data.name.size() > 0 &&
+            request.resource.data.dateOfBirth is timestamp;
+        }
+        function verificationKeys() {
+          return ['verificationStatus', 'verifiedAt', 'verifiedBy'];
+        }
         allow read: if isSignedIn() && (request.auth.uid == uid || isStaff());
-        allow create, update: if isSignedIn() && (request.auth.uid == uid || isAdmin()) &&
-          request.resource.data.name is string &&
-          request.resource.data.name.size() > 0 &&
-          request.resource.data.dateOfBirth is timestamp;
+        allow create: if isSignedIn() && validChild() && (
+          isAdmin() ||
+          (
+            request.auth.uid == uid &&
+            request.resource.data.get('verificationStatus', 'pending') == 'pending' &&
+            !request.resource.data.keys().hasAny(['verifiedAt', 'verifiedBy'])
+          )
+        );
+        allow update: if isSignedIn() && validChild() && (
+          isAdmin() ||
+          (
+            request.auth.uid == uid &&
+            !request.resource.data.diff(resource.data).affectedKeys().hasAny(verificationKeys()) &&
+            (
+              resource.data.get('verificationStatus', 'pending') != 'verified' ||
+              !request.resource.data.diff(resource.data).affectedKeys().hasAny(['name', 'dateOfBirth'])
+            )
+          )
+        );
         allow delete: if isAdmin();
       }
     }

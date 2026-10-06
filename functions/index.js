@@ -1,4 +1,5 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onDocumentCreated } = require("firebase-functions/v2/firestore");
 const { setGlobalOptions } = require("firebase-functions/v2");
 const admin = require("firebase-admin");
 
@@ -107,19 +108,81 @@ async function assertJuniorEligible(uid, planName) {
   const children = await db.collection("users").doc(uid)
     .collection("dependents").where("isActive", "==", true).get();
   const now = new Date();
-  const eligible = children.docs.some((d) => {
+  const rightAge = children.docs.filter((d) => {
     const dob = d.get("dateOfBirth");
     if (!dob) return false;
     const age = ageOn(dob.toDate(), now);
     return age >= JUNIOR_MIN_AGE && age < JUNIOR_MAX_AGE_EXCLUSIVE;
   });
-  if (!eligible) {
-    throw new HttpsError(
-      "failed-precondition",
-      "Junior packages are for children aged 6–17. Add your child in My Family first."
-    );
-  }
+  // Staff must have approved the child (see onDependentCreated) — a
+  // self-declared profile alone isn't proof a child exists.
+  if (rightAge.some((d) => d.get("verificationStatus") === "verified")) return;
+  throw new HttpsError(
+    "failed-precondition",
+    rightAge.some((d) => d.get("verificationStatus") !== "rejected")
+      ? "Your child's profile is awaiting approval by our staff. Junior packages unlock once it's approved."
+      : "Junior packages are for children aged 6–17. Add your child in My Family first."
+  );
 }
+
+// ── onDependentCreated ──────────────────────────────────────────────────────
+// Every child profile a parent adds needs staff approval before junior
+// packages can be bought/used for it. Filing the request server-side (not
+// from the app) means it also happens for children added from app builds
+// released before verification existed. Children added by an admin arrive
+// already verified and are skipped.
+exports.onDependentCreated = onDocumentCreated("users/{uid}/dependents/{childId}", async (event) => {
+  const child = event.data?.data();
+  if (!child || child.verificationStatus === "verified") return;
+
+  const db = admin.firestore();
+  const { uid, childId } = event.params;
+  const parentSnap = await db.collection("users").doc(uid).get();
+  const parent = parentSnap.data() || {};
+  const parentName = parent.name || parent.email || "Member";
+
+  const dob = child.dateOfBirth?.toDate();
+  const age = dob ? ageOn(dob, new Date()) : null;
+  const dobText = dob
+    ? `${String(dob.getDate()).padStart(2, "0")}/${String(dob.getMonth() + 1).padStart(2, "0")}/${dob.getFullYear()} (age ${age})`
+    : "not given";
+
+  await db.collection("adminRequests").add({
+    type: "child_verification",
+    requestedBy: uid,
+    requestedByName: parentName,
+    targetUserId: uid,
+    targetUserName: parentName,
+    attendeeId: childId,
+    attendeeName: child.name || "",
+    amount: 0,
+    status: "pending",
+    note: `Date of birth: ${dobText} · ${child.relationship || "Parent"}`,
+    createdAt: admin.firestore.Timestamp.now(),
+  });
+
+  // Names are parent-typed text going into an HTML email — escape them.
+  const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  const admins = await db.collection("users").where("role", "==", "admin").get();
+  const emails = admins.docs.map((d) => d.get("email")).filter(Boolean);
+  if (emails.length === 0) return;
+  await db.collection("mail").add({
+    to: emails,
+    message: {
+      subject: `New Child Verification — ${String(parentName).slice(0, 80)}`,
+      html: `
+        <div style="font-family: sans-serif; color: #0A0A0A;">
+          <h2 style="color: #FF7A00;">New Child Verification</h2>
+          <p><strong>${esc(parentName)}</strong> added a child to their account:</p>
+          <p><strong>${esc(child.name)}</strong> — date of birth ${dobText}</p>
+          <p>Approve or reject it in the admin app under Requests. Junior
+          packages can't be bought or used for this child until it's approved.</p>
+        </div>`,
+    },
+  });
+});
 
 // Shared by createPaymentIntent (mobile PaymentSheet) and
 // createCheckoutSession (web Checkout) so both enforce identical validation

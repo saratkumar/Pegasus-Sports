@@ -171,9 +171,12 @@ class _JuniorCard extends StatelessWidget {
                         fontWeight: FontWeight.w700,
                         color: AppColors.textPrimary)),
               ),
-              Text('Age ${c.ageOn(date)}',
-                  style: const TextStyle(
-                      fontSize: 13, color: AppColors.textSecondary)),
+              Text('Age ${c.ageOn(date)} · ${c.verificationLabel}',
+                  style: TextStyle(
+                      fontSize: 13,
+                      color: c.isVerified
+                          ? AppColors.textSecondary
+                          : AppColors.error)),
             ],
           ),
           const SizedBox(height: 10),

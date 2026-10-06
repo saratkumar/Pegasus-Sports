@@ -55,10 +55,11 @@ class BookingService {
   /// when the account holder attends ([attendee] null) they're excluded
   /// outright; when a child attends they're drawn from first, falling back
   /// to the parent's other plans (parents may spend their own credits on
-  /// their children).
+  /// their children). A child not yet approved by staff is treated like the
+  /// account holder: junior credits are excluded until verification.
   static Future<CreditRules> creditRulesFor(DependentModel? attendee) async {
     final junior = await MembershipPlanService.getJuniorPlanNames();
-    return attendee == null
+    return attendee == null || !attendee.isVerified
         ? (excluded: junior, preferred: const <String>{})
         : (excluded: const <String>{}, preferred: junior);
   }
