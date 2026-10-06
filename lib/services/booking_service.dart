@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 
 import '../models/class_model.dart';
 import '../models/dependent_model.dart';
@@ -8,6 +7,7 @@ import 'class_service.dart';
 import 'config_service.dart';
 import 'membership_plan_service.dart';
 import 'user_service.dart';
+import '../utils/crash_log.dart';
 
 /// Why [BookingService.bookClass] refused to book — callers map each reason
 /// to their own user-facing text (self-booking and admin-on-behalf-of-client
@@ -205,8 +205,7 @@ class BookingService {
 
       return BookingResult.ok(bookingRef.id);
     } catch (e, st) {
-      FirebaseCrashlytics.instance
-          .recordError(e, st, reason: 'Class booking failed', fatal: false);
+      crashRecord(e, st, reason: 'Class booking failed', fatal: false);
       return BookingResult.failure(BookingFailureReason.unknown,
           errorDetail: e.toString());
     }

@@ -1,8 +1,8 @@
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'config_service.dart';
 import 'invoice_pdf_service.dart';
+import '../utils/crash_log.dart';
 
 class InvoiceService {
   /// Derives the invoice number from the Stripe [paymentIntentId] (globally
@@ -81,7 +81,7 @@ class InvoiceService {
           sheetRecorded = true;
         } catch (e, st) {
           // Reported via the returned flag — no rethrow.
-          FirebaseCrashlytics.instance.recordError(e, st,
+          crashRecord(e, st,
               reason: 'Invoice sheet recording failed', fatal: false);
         }
       }());
@@ -107,7 +107,7 @@ class InvoiceService {
           emailSent = true;
         } catch (e, st) {
           error = e.toString();
-          FirebaseCrashlytics.instance.recordError(e, st,
+          crashRecord(e, st,
               reason: 'Invoice email send failed', fatal: false);
         }
       }());

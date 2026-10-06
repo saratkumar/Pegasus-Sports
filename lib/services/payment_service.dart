@@ -1,9 +1,11 @@
 import 'dart:async';
 
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:firebase_crashlytics/firebase_crashlytics.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../utils/crash_log.dart';
 
 class PaymentService {
   // Cloud Functions are deployed to asia-southeast1 (see functions/index.js
@@ -22,7 +24,7 @@ class PaymentService {
   /// test and live needs no app release. Re-applied only if it changed.
   static Future<void> _ensureInitialized(String publishableKey) async {
     if (_appliedKey == publishableKey) return;
-    FirebaseCrashlytics.instance.log('processPayment: applying Stripe settings');
+    crashLog('processPayment: applying Stripe settings');
     Stripe.publishableKey = publishableKey;
     await Stripe.instance.applySettings().timeout(const Duration(seconds: 10),
         onTimeout: () => throw TimeoutException(
@@ -51,12 +53,23 @@ class PaymentService {
         double feeAmount,
         double grossAmount
       })> processPayment({
+    required BuildContext context,
     required String planName,
     required double netAmount,
     required String currency,
     required String cardRegion,
     required String cardBrand,
   }) async {
+    // The PaymentSheet below is mobile-only (flutter_stripe has no web
+    // implementation of it) — the web shop pays via Stripe Checkout.
+    if (kIsWeb) {
+      return _processCheckout(context,
+          planName: planName,
+          netAmount: netAmount,
+          currency: currency,
+          cardRegion: cardRegion,
+          cardBrand: cardBrand);
+    }
     // Breadcrumbs, not error reports — the known failure mode here (see
     // memberships_screen.dart's _confirm()) is the Stripe sheet silently
     // never appearing, with no exception thrown at all, so there's nothing
@@ -65,7 +78,7 @@ class PaymentService {
     // a user hits the hang and force-quits, the timeouts below (or
     // whatever they trigger next) will show exactly which step it stuck
     // on instead of just "payment failed" with no context.
-    FirebaseCrashlytics.instance.log('processPayment: calling createPaymentIntent');
+    crashLog('processPayment: calling createPaymentIntent');
     final result = await _functions
         .httpsCallable('createPaymentIntent')
         .call({
@@ -91,7 +104,7 @@ class PaymentService {
     }
     await _ensureInitialized(publishableKey);
 
-    FirebaseCrashlytics.instance.log('processPayment: initializing payment sheet');
+    crashLog('processPayment: initializing payment sheet');
     await Stripe.instance
         .initPaymentSheet(
           paymentSheetParameters: SetupPaymentSheetParameters(
@@ -138,7 +151,7 @@ class PaymentService {
                 'initPaymentSheet did not complete within 15s — the Stripe '
                 'sheet likely never appeared'));
 
-    FirebaseCrashlytics.instance.log('processPayment: presenting payment sheet');
+    crashLog('processPayment: presenting payment sheet');
     // This is the call that actually renders the sheet — a bounded but
     // generous timeout rather than none, since a real user filling in card
     // details can legitimately take a couple minutes. Previously unbounded,
@@ -152,12 +165,74 @@ class PaymentService {
         onTimeout: () => throw TimeoutException(
             'presentPaymentSheet did not complete within 3 minutes — the '
             'Stripe sheet may never have rendered'));
-    FirebaseCrashlytics.instance.log('processPayment: payment sheet completed');
+    crashLog('processPayment: payment sheet completed');
 
     return (
       paymentIntentId: paymentIntentId,
       netAmount: serverNetAmount,
       feeAmount: feeAmount,
+      grossAmount: grossAmount,
+    );
+  }
+
+  /// Web equivalent of [processPayment]: creates a Stripe Checkout session
+  /// server-side (same validation/fee math as createPaymentIntent), opens
+  /// Stripe's hosted payment page in a new tab — Checkout won't render
+  /// inside the iframe the shop is embedded in — and polls until it's paid.
+  /// Returns the same record as the mobile flow, so the caller's
+  /// confirm/invoice steps are shared. Cancelling throws the same
+  /// [FailureCode.Canceled] [StripeException] the PaymentSheet does.
+  static Future<
+      ({
+        String paymentIntentId,
+        double netAmount,
+        double feeAmount,
+        double grossAmount
+      })> _processCheckout(
+    BuildContext context, {
+    required String planName,
+    required double netAmount,
+    required String currency,
+    required String cardRegion,
+    required String cardBrand,
+  }) async {
+    final result = await _functions
+        .httpsCallable('createCheckoutSession')
+        .call({
+          'netAmount': netAmount,
+          'currency': currency,
+          'planName': planName,
+          'cardRegion': cardRegion,
+          'cardBrand': cardBrand,
+        })
+        .timeout(const Duration(seconds: 20),
+            onTimeout: () => throw TimeoutException(
+                'createCheckoutSession did not respond within 20s'));
+    final data = result.data as Map;
+    final grossAmount = (data['grossAmount'] as num).toDouble();
+
+    if (!context.mounted) {
+      throw StateError('Checkout was interrupted');
+    }
+    final paymentIntentId = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _CheckoutDialog(
+        url: data['url'] as String,
+        sessionId: data['sessionId'] as String,
+        grossAmount: grossAmount,
+      ),
+    );
+    if (paymentIntentId == null) {
+      throw const StripeException(
+        error: LocalizedErrorMessage(
+            code: FailureCode.Canceled, message: 'Checkout cancelled'),
+      );
+    }
+    return (
+      paymentIntentId: paymentIntentId,
+      netAmount: (data['netAmount'] as num).toDouble(),
+      feeAmount: (data['feeAmount'] as num).toDouble(),
       grossAmount: grossAmount,
     );
   }
@@ -204,5 +279,93 @@ class PaymentService {
       'validityDays': validityDays,
       'couponCode': couponCode,
     });
+  }
+}
+
+/// "Pay securely" dialog for web Checkout. The Stripe page is opened from a
+/// button tap (not automatically) so browsers treat the new tab as
+/// user-initiated rather than a blocked pop-up. Polls the session every 3s
+/// and pops with the PaymentIntent id once paid, or null if cancelled or
+/// the session expired.
+class _CheckoutDialog extends StatefulWidget {
+  final String url;
+  final String sessionId;
+  final double grossAmount;
+  const _CheckoutDialog({
+    required this.url,
+    required this.sessionId,
+    required this.grossAmount,
+  });
+
+  @override
+  State<_CheckoutDialog> createState() => _CheckoutDialogState();
+}
+
+class _CheckoutDialogState extends State<_CheckoutDialog> {
+  Timer? _poll;
+  bool _opened = false;
+  bool _checking = false;
+  String? _notice;
+
+  @override
+  void dispose() {
+    _poll?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _open() async {
+    await launchUrl(Uri.parse(widget.url), webOnlyWindowName: '_blank');
+    if (!mounted) return;
+    setState(() => _opened = true);
+    _poll ??= Timer.periodic(const Duration(seconds: 3), (_) => _check());
+  }
+
+  Future<void> _check() async {
+    if (_checking) return;
+    _checking = true;
+    try {
+      final res = await PaymentService._functions
+          .httpsCallable('getCheckoutSession')
+          .call({'sessionId': widget.sessionId});
+      final d = res.data as Map;
+      if (!mounted) return;
+      if (d['status'] == 'complete' && d['paymentStatus'] == 'paid') {
+        _poll?.cancel();
+        Navigator.of(context).pop(d['paymentIntentId'] as String);
+      } else if (d['status'] == 'expired') {
+        _poll?.cancel();
+        setState(() => _notice =
+            'This payment page has expired. Please close and try again.');
+      }
+    } catch (_) {
+      // Transient network error — the next tick retries.
+    } finally {
+      _checking = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Pay securely with Stripe'),
+      content: Text(_notice ??
+          (_opened
+              ? 'Complete your payment in the new tab. This window updates '
+                  'automatically once the payment goes through.'
+              : 'A secure Stripe page will open in a new tab to pay '
+                  'SGD ${widget.grossAmount.toStringAsFixed(2)} by card, '
+                  'PayNow, Apple Pay or Google Pay.')),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        if (_notice == null)
+          ElevatedButton(
+            onPressed: _open,
+            child: Text(_opened ? 'Reopen payment page' : 'Continue to payment'),
+          ),
+      ],
+    );
   }
 }

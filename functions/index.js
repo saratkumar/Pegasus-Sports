@@ -81,7 +81,12 @@ function computeCardFee(netAmount, cardRegion, cardBrand) {
 // publishableKey }. The publishable key is served from the
 // STRIPE_PUBLISHABLE_KEY secret (not compiled into the app) so it always
 // pairs with STRIPE_SECRET_KEY — test/live is switched server-side only.
-exports.createPaymentIntent = onCall({ secrets: ["STRIPE_SECRET_KEY", "STRIPE_PUBLISHABLE_KEY"] }, async (request) => {
+// Shared by createPaymentIntent (mobile PaymentSheet) and
+// createCheckoutSession (web Checkout) so both enforce identical validation
+// and server-side fee math. Returns the metadata to stamp on the
+// PaymentIntent — confirmMembershipPayment later trusts it, since it was
+// written here, not supplied by the client.
+function preparePayment(request) {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Must be signed in.");
   }
@@ -102,6 +107,26 @@ exports.createPaymentIntent = onCall({ secrets: ["STRIPE_SECRET_KEY", "STRIPE_PU
   // card tier, the server is the sole authority on the resulting charge.
   const { feeAmount, grossAmount } = computeCardFee(netAmount, cardRegion, cardBrand);
 
+  return {
+    netAmount,
+    currency,
+    planName,
+    feeAmount,
+    grossAmount,
+    metadata: {
+      userId: request.auth.uid,
+      planName,
+      netAmount: netAmount.toFixed(2),
+      feeAmount: feeAmount.toFixed(2),
+      cardRegion,
+      cardBrand,
+    },
+  };
+}
+
+exports.createPaymentIntent = onCall({ secrets: ["STRIPE_SECRET_KEY", "STRIPE_PUBLISHABLE_KEY"] }, async (request) => {
+  const { netAmount, currency, planName, feeAmount, grossAmount, metadata } = preparePayment(request);
+
   const publishableKey = process.env.STRIPE_PUBLISHABLE_KEY;
   if (!publishableKey) {
     throw new HttpsError("failed-precondition", "Stripe publishable key is not configured.");
@@ -112,14 +137,7 @@ exports.createPaymentIntent = onCall({ secrets: ["STRIPE_SECRET_KEY", "STRIPE_PU
     amount: Math.round(grossAmount * 100), // Stripe uses smallest currency unit (cents)
     currency,
     description: planName,
-    metadata: {
-      userId: request.auth.uid,
-      planName,
-      netAmount: netAmount.toFixed(2),
-      feeAmount: feeAmount.toFixed(2),
-      cardRegion,
-      cardBrand,
-    },
+    metadata,
     automatic_payment_methods: { enabled: true },
   });
 
@@ -130,6 +148,63 @@ exports.createPaymentIntent = onCall({ secrets: ["STRIPE_SECRET_KEY", "STRIPE_PU
     feeAmount,
     grossAmount,
     publishableKey,
+  };
+});
+
+// ── createCheckoutSession (web) ─────────────────────────────────────────────
+// The mobile PaymentSheet has no Flutter web implementation, so the web shop
+// pays through a Stripe-hosted Checkout page instead (opened in a new tab —
+// Checkout refuses to render inside the iframe the shop is embedded in).
+// Same validation/fee/metadata as createPaymentIntent; the resulting
+// PaymentIntent is then confirmed through the same confirmMembershipPayment.
+const CHECKOUT_RETURN_PAGE = "https://psas-shop.web.app/checkout-complete.html";
+
+exports.createCheckoutSession = onCall({ secrets: ["STRIPE_SECRET_KEY"] }, async (request) => {
+  const { netAmount, currency, planName, feeAmount, grossAmount, metadata } = preparePayment(request);
+
+  const stripe = getStripe();
+  const session = await stripe.checkout.sessions.create({
+    mode: "payment",
+    client_reference_id: request.auth.uid,
+    ...(request.auth.token.email && { customer_email: request.auth.token.email }),
+    line_items: [{
+      quantity: 1,
+      price_data: {
+        currency,
+        unit_amount: Math.round(grossAmount * 100),
+        product_data: { name: planName },
+      },
+    }],
+    payment_intent_data: { description: planName, metadata },
+    metadata,
+    success_url: `${CHECKOUT_RETURN_PAGE}?status=success`,
+    cancel_url: `${CHECKOUT_RETURN_PAGE}?status=cancel`,
+    // Stripe's minimum; an abandoned page stops accepting payment soon after.
+    expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
+  });
+
+  return { url: session.url, sessionId: session.id, netAmount, feeAmount, grossAmount };
+});
+
+// ── getCheckoutSession (web) ────────────────────────────────────────────────
+// Polled by the web shop while the Checkout tab is open. Only the user who
+// created the session may read it.
+exports.getCheckoutSession = onCall({ secrets: ["STRIPE_SECRET_KEY"] }, async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Must be signed in.");
+  }
+  const { sessionId } = request.data || {};
+  if (!sessionId) {
+    throw new HttpsError("invalid-argument", "sessionId is required.");
+  }
+  const session = await getStripe().checkout.sessions.retrieve(sessionId);
+  if (session.client_reference_id !== request.auth.uid) {
+    throw new HttpsError("permission-denied", "Not your checkout session.");
+  }
+  return {
+    status: session.status, // open | complete | expired
+    paymentStatus: session.payment_status, // paid | unpaid | no_payment_required
+    paymentIntentId: session.payment_intent || null,
   };
 });
 

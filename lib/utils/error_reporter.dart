@@ -1,6 +1,6 @@
-import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
 import 'app_toast.dart';
+import 'crash_log.dart';
 
 /// Logs the real error to Crashlytics (so it's visible in the Firebase
 /// Console without depending on a user relaying a raw exception string) and
@@ -13,8 +13,7 @@ void reportError(
   required String userMessage,
   required String reason,
 }) {
-  FirebaseCrashlytics.instance
-      .recordError(error, stackTrace, reason: reason, fatal: false);
+  crashRecord(error, stackTrace, reason: reason, fatal: false);
   if (context.mounted) {
     AppToast.error(context, userMessage);
   }

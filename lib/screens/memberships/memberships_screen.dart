@@ -138,6 +138,7 @@ class _MembershipScreenState extends State<MembershipScreen> {
       double? grossAmount;
       if (finalAmount > 0) {
         final payment = await PaymentService.processPayment(
+          context: context,
           planName: plan.name,
           netAmount: finalAmount,
           currency: 'sgd',
