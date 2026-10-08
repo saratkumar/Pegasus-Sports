@@ -533,6 +533,77 @@ const APPS_SCRIPT_ALLOWED_ACTIONS = new Set([
   "get_transactions",
 ]);
 
+// ── onUserCreated: hand imported members their data ────────────────────────
+// Members migrated from Glofox were imported as users/{autoId} docs flagged
+// importedPending (they had no sign-in account yet), so admins see them in
+// User Management with their plans, credits and children. When that person
+// first signs in, the app creates users/{authUid} — this moves everything
+// from the imported doc onto it (including anything an admin changed or
+// booked in the meantime) and deletes the imported doc.
+exports.onUserCreated = onDocumentCreated("users/{uid}", async (event) => {
+  const created = event.data?.data();
+  if (!created || created.importedPending) return;
+  const email = String(created.email || "").trim().toLowerCase();
+  if (!email) return;
+
+  const db = admin.firestore();
+  const uid = event.params.uid;
+  const matches = await db.collection("users").where("email", "==", email).get();
+  const imported = matches.docs.find((d) => d.id !== uid && d.get("importedPending") === true);
+  if (!imported) return;
+  const importedRef = imported.ref;
+  const userRef = db.collection("users").doc(uid);
+
+  const children = await importedRef.collection("dependents").get();
+
+  await db.runTransaction(async (tx) => {
+    const [impSnap, userSnap] = await Promise.all([tx.get(importedRef), tx.get(userRef)]);
+    if (!impSnap.exists || !userSnap.exists) return;
+    const imp = impSnap.data();
+    const user = userSnap.data();
+
+    // One active entry per plan name (app invariant) — top up if the new
+    // account somehow already holds the same active plan.
+    const memberships = [...(user.memberships || [])];
+    for (const m of imp.memberships || []) {
+      const same = memberships.findIndex((x) => x.planName === m.planName && x.status === "active");
+      if (same !== -1 && m.status === "active") {
+        const remaining = (memberships[same].creditsRemaining || 0) + (m.creditsRemaining || 0);
+        memberships[same] = { ...memberships[same], creditsRemaining: remaining,
+          credits: Math.max(memberships[same].credits || 0, remaining) };
+      } else {
+        memberships.push(m);
+      }
+    }
+
+    const update = {
+      memberships,
+      credits: (user.credits || 0) + (imp.credits || 0),
+      importSource: imp.importSource || "import",
+    };
+    if (imp.adminCreditGrant && !user.adminCreditGrant) update.adminCreditGrant = imp.adminCreditGrant;
+    if (!user.phone && imp.phone) update.phone = imp.phone;
+    if (!user.name && imp.name) update.name = imp.name;
+    tx.update(userRef, update);
+
+    for (const c of children.docs) {
+      tx.set(userRef.collection("dependents").doc(c.id), c.data());
+      tx.delete(c.ref);
+    }
+    tx.delete(importedRef);
+  });
+
+  // Re-point anything booked against the imported doc in the meantime.
+  for (const col of ["bookings", "waitingList", "transactions", "payments"]) {
+    const field = col === "transactions" ? "clientUid" : "userId";
+    const snap = await db.collection(col).where(field, "==", imported.id).get();
+    if (snap.empty) continue;
+    const batch = db.batch();
+    snap.docs.forEach((d) => batch.update(d.ref, { [field]: uid }));
+    await batch.commit();
+  }
+});
+
 async function callerIsAdmin(uid) {
   const doc = await admin.firestore().collection("users").doc(uid).get();
   return doc.data()?.role === "admin";
