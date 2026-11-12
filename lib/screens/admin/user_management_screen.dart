@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../../widgets/coach_profile.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -369,8 +370,12 @@ class _UserEditSheetState extends State<_UserEditSheet> {
   late String _role;
   late TextEditingController _creditsCtrl;
   late List<MembershipEntry> _memberships;
+  late TextEditingController _coachPhotoCtrl;
+  late TextEditingController _coachBioCtrl;
   bool _saving = false;
   bool _sendingReminder = false;
+
+  bool get _isCoach => _role == 'trainer' || _role == 'admin';
 
   @override
   void initState() {
@@ -379,11 +384,16 @@ class _UserEditSheetState extends State<_UserEditSheet> {
     _creditsCtrl =
         TextEditingController(text: widget.user.credits.toString());
     _memberships = List.of(widget.user.memberships);
+    _coachPhotoCtrl =
+        TextEditingController(text: widget.user.coachPhotoUrl ?? '');
+    _coachBioCtrl = TextEditingController(text: widget.user.coachBio ?? '');
   }
 
   @override
   void dispose() {
     _creditsCtrl.dispose();
+    _coachPhotoCtrl.dispose();
+    _coachBioCtrl.dispose();
     super.dispose();
   }
 
@@ -416,6 +426,17 @@ class _UserEditSheetState extends State<_UserEditSheet> {
       adminLevel: _role == 'admin' ? 'super_admin' : null,
       adminPermissions: const [],
     );
+
+    final coachChanged =
+        _coachPhotoCtrl.text.trim() != (widget.user.coachPhotoUrl ?? '') ||
+            _coachBioCtrl.text.trim() != (widget.user.coachBio ?? '');
+    if (_isCoach && coachChanged) {
+      await UserService.updateCoachProfile(
+        uid: widget.user.uid,
+        photoUrl: _coachPhotoCtrl.text,
+        bio: _coachBioCtrl.text,
+      );
+    }
 
     if (creditDiff > 0) {
       await UserService.grantAdminCredit(
@@ -659,6 +680,14 @@ class _UserEditSheetState extends State<_UserEditSheet> {
               selected: _role,
               onChanged: (r) => setState(() => _role = r),
             ),
+            if (_isCoach) ...[
+              const SizedBox(height: 16),
+              CoachProfileFields(
+                photoCtrl: _coachPhotoCtrl,
+                bioCtrl: _coachBioCtrl,
+                uploadForUid: widget.user.uid,
+              ),
+            ],
             const SizedBox(height: 16),
             StreamBuilder<List<DependentModel>>(
               stream: DependentService.streamActive(widget.user.uid),

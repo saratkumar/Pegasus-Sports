@@ -16,7 +16,11 @@ import '../../services/notifications.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
 import '../../utils/require_login.dart';
+import '../../utils/time_utils.dart';
 import '../../widgets/attendee_picker.dart';
+import '../../widgets/coach_profile.dart';
+import '../../widgets/guest_picker.dart';
+import '../../models/user_model.dart';
 
 class ClassesScreen extends StatefulWidget {
   const ClassesScreen({super.key});
@@ -167,6 +171,21 @@ class _ClassesScreenState extends State<ClassesScreen> {
     final child = choice.child;
     final forLabel = child == null ? '' : ' for ${child.name}';
 
+    // Friends come along on the member's own credits — offered only when
+    // the member attends and has a credit and a spot to spare.
+    var guests = const <String>[];
+    if (child == null) {
+      final max = await BookingService.maxGuests(
+          cls: cls, date: _selectedDate, uid: uid, memberAlreadyBooked: false);
+      if (max > 0) {
+        if (!context.mounted) return;
+        final picked = await pickGuests(context,
+            className: cls.mode, maxGuests: max, memberAlreadyBooked: false);
+        if (picked == null) return;
+        guests = picked;
+      }
+    }
+
     final result = await BookingService.bookClass(
       cls: cls,
       date: _selectedDate,
@@ -207,6 +226,17 @@ class _ClassesScreenState extends State<ClassesScreen> {
       return;
     }
 
+    var guestLabel = '';
+    if (guests.isNotEmpty) {
+      final guestResult = await _bookGuests(cls, uid, guests);
+      if (guestResult.success) {
+        guestLabel = ' + ${guests.join(', ')}';
+      } else if (context.mounted) {
+        AppToast.warning(context,
+            "You're booked, but your friends couldn't be added: ${_guestFailureText(guestResult)}");
+      }
+    }
+
     final userDoc =
         await FirebaseFirestore.instance.collection('users').doc(uid).get();
     final email = FirebaseAuth.instance.currentUser?.email?.isNotEmpty == true
@@ -217,7 +247,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
       try {
         await EmailService.sendBookingEmail(
           email: email,
-          className: '${cls.mode}$forLabel',
+          className: '${cls.mode}$forLabel$guestLabel',
           classTime: cls.startTime,
           classDate: _selectedDate,
           location: cls.location,
@@ -237,7 +267,72 @@ class _ClassesScreenState extends State<ClassesScreen> {
 
     if (context.mounted) {
       AppToast.success(context,
-          '${cls.mode} booked$forLabel for ${_formatDate(_selectedDate)}');
+          '${cls.mode} booked$forLabel$guestLabel for ${_formatDate(_selectedDate)}');
+    }
+  }
+
+  Future<BookingResult> _bookGuests(
+          ClassModel cls, String uid, List<String> guests) =>
+      BookingService.bookGuests(
+        cls: cls,
+        date: _selectedDate,
+        targetUid: uid,
+        bookedByUid: uid,
+        bookedByRole: 'client',
+        guestNames: guests,
+        targetUserName: FirebaseAuth.instance.currentUser?.displayName ?? uid,
+      );
+
+  String _guestFailureText(BookingResult result) => switch (result.reason) {
+        BookingFailureReason.noCredits => 'not enough credits',
+        BookingFailureReason.classFull => 'not enough spots left',
+        BookingFailureReason.planNotAllowed =>
+          "your plan doesn't cover this class",
+        _ => result.errorDetail ?? 'please try again',
+      };
+
+  /// Adds friends to a session the member is already booked into.
+  Future<void> _addGuests(BuildContext context, ClassModel cls) async {
+    if (!await requireRealSignIn(context)) return;
+    if (!context.mounted) return;
+    final uid = FirebaseAuth.instance.currentUser!.uid;
+    final max = await BookingService.maxGuests(
+        cls: cls, date: _selectedDate, uid: uid, memberAlreadyBooked: true);
+    if (!context.mounted) return;
+    if (max == 0) {
+      AppToast.warning(context,
+          'You need a free credit and a spot left to bring a friend');
+      return;
+    }
+    final guests = await pickGuests(context,
+        className: cls.mode, maxGuests: max, memberAlreadyBooked: true);
+    if (guests == null || guests.isEmpty) return;
+
+    final result = await _bookGuests(cls, uid, guests);
+    if (!context.mounted) return;
+    if (!result.success) {
+      AppToast.error(context,
+          "Couldn't add your friends: ${_guestFailureText(result)}");
+      return;
+    }
+
+    final email = FirebaseAuth.instance.currentUser?.email ?? '';
+    if (email.isNotEmpty) {
+      try {
+        await EmailService.sendBookingEmail(
+          email: email,
+          className: '${cls.mode} (guests: ${guests.join(', ')})',
+          classTime: cls.startTime,
+          classDate: _selectedDate,
+          location: cls.location,
+        );
+      } catch (e) {
+        debugPrint('Guest booking email failed: $e');
+      }
+    }
+    if (context.mounted) {
+      AppToast.success(context,
+          '${guests.join(', ')} added to ${cls.mode} · ${guests.length} credit${guests.length == 1 ? '' : 's'} used');
     }
   }
 
@@ -394,7 +489,18 @@ class _ClassesScreenState extends State<ClassesScreen> {
                         c.isActive &&
                         _matchesDate(c, _selectedDate) &&
                         !c.isCancelledOn(_selectedDate))
-                    .toList();
+                    .toList()
+                  // By start time, so a class run several times a day
+                  // lists each session in order.
+                  ..sort((a, b) {
+                    int minutes(ClassModel c) {
+                      final t = parseTimeString(c.startTime);
+                      return t == null ? 24 * 60 : t.hour * 60 + t.minute;
+                    }
+
+                    final byTime = minutes(a).compareTo(minutes(b));
+                    return byTime != 0 ? byTime : a.mode.compareTo(b.mode);
+                  });
 
                 if (classes.isEmpty) {
                   return _emptyState(all.isEmpty
@@ -414,6 +520,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
                       onBook: (ctx, taken) => _book(ctx, cls, taken),
                       onJoinWaitingList: (ctx) =>
                           _joinWaitingList(ctx, cls),
+                      onAddGuests: (ctx) => _addGuests(ctx, cls),
                     );
                   },
                 );
@@ -607,6 +714,7 @@ class _ClassCard extends StatelessWidget {
   final Set<String> familyKeys;
   final Future<void> Function(BuildContext, Set<String> takenKeys) onBook;
   final Future<void> Function(BuildContext) onJoinWaitingList;
+  final Future<void> Function(BuildContext) onAddGuests;
 
   const _ClassCard({
     required this.item,
@@ -614,6 +722,7 @@ class _ClassCard extends StatelessWidget {
     required this.familyKeys,
     required this.onBook,
     required this.onJoinWaitingList,
+    required this.onAddGuests,
   });
 
   @override
@@ -681,7 +790,7 @@ class _ClassCard extends StatelessWidget {
                           fontSize: 13, color: AppColors.textSecondary)),
                 ],
                 const SizedBox(height: 12),
-                _row(Icons.person_outline, item.coach),
+                _coachRow(context),
                 const SizedBox(height: 5),
                 _row(Icons.location_on_outlined,
                     '${item.location} · ${item.detailLocation}'),
@@ -696,6 +805,7 @@ class _ClassCard extends StatelessWidget {
                   familyKeys: familyKeys,
                   onBook: onBook,
                   onJoinWaitingList: onJoinWaitingList,
+                  onAddGuests: onAddGuests,
                 ),
               ],
             ),
@@ -712,6 +822,37 @@ class _ClassCard extends StatelessWidget {
         child: Icon(Icons.fitness_center,
             size: 42,
             color: AppColors.primary.withValues(alpha: 0.4)),
+      ),
+    );
+  }
+
+  /// Coach with their photo — tap for their profile.
+  Widget _coachRow(BuildContext context) {
+    if (item.coach.trim().isEmpty) return _row(Icons.person_outline, 'Coach TBA');
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => showCoachProfile(context, item.coach),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Row(
+          children: [
+            FutureBuilder<UserModel?>(
+              future: CoachDirectory.find(item.coach),
+              builder: (_, snap) =>
+                  CoachAvatar(photoUrl: snap.data?.coachPhotoUrl, radius: 11),
+            ),
+            const SizedBox(width: 7),
+            Expanded(
+              child: Text(item.coach,
+                  style: const TextStyle(
+                      fontSize: 13,
+                      color: AppColors.primary,
+                      fontWeight: FontWeight.w600)),
+            ),
+            const Icon(Icons.chevron_right,
+                size: 16, color: AppColors.textMuted),
+          ],
+        ),
       ),
     );
   }
@@ -740,6 +881,7 @@ class _CapacitySection extends StatefulWidget {
   final Set<String> familyKeys;
   final Future<void> Function(BuildContext, Set<String> takenKeys) onBook;
   final Future<void> Function(BuildContext) onJoinWaitingList;
+  final Future<void> Function(BuildContext) onAddGuests;
 
   const _CapacitySection({
     required this.classId,
@@ -748,6 +890,7 @@ class _CapacitySection extends StatefulWidget {
     required this.familyKeys,
     required this.onBook,
     required this.onJoinWaitingList,
+    required this.onAddGuests,
   });
 
   @override
@@ -793,11 +936,19 @@ class _CapacitySectionState extends State<_CapacitySection> {
         final booked = todayDocs.length;
         // Who in this family is booked ('' = account holder, else child id)
         // — only "Already Booked" once everyone is.
-        final takenKeys = todayDocs
+        final mine = todayDocs
             .map((d) => d.data() as Map<String, dynamic>)
             .where((data) => data['userId'] == currentUid)
+            .toList();
+        // Guests brought on this member's credits don't book the member.
+        final takenKeys = mine
+            .where((data) => data['guestName'] == null)
             .map((data) => (data['attendeeId'] as String?) ?? '')
             .toSet();
+        final myGuests = mine
+            .map((data) => data['guestName'] as String?)
+            .whereType<String>()
+            .toList();
         final alreadyBooked = widget.familyKeys.every(takenKeys.contains);
         final hasFamily = widget.familyKeys.length > 1;
         final capacity = int.tryParse(widget.groupSize) ?? 0;
@@ -936,6 +1087,21 @@ class _CapacitySectionState extends State<_CapacitySection> {
                     ),
                   ),
                 ],
+                if (myGuests.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text('Your guests: ${myGuests.join(', ')}',
+                      style: const TextStyle(
+                          fontSize: 12, color: AppColors.textSecondary)),
+                ],
+                if (takenKeys.contains('') && !isFull)
+                  SizedBox(
+                    width: double.infinity,
+                    child: TextButton.icon(
+                      onPressed: () => widget.onAddGuests(context),
+                      icon: const Icon(Icons.person_add_alt_1, size: 18),
+                      label: const Text('Bring a friend'),
+                    ),
+                  ),
               ],
             );
           },

@@ -11,6 +11,7 @@ import '../screens/admin/class_management_screen.dart';
 import '../screens/admin/class_roster_screen.dart';
 import '../screens/admin/facility_management_screen.dart';
 import '../screens/admin/plan_management_screen.dart';
+import '../screens/admin/trainer_profiles_screen.dart';
 import '../screens/admin/type_management_screen.dart';
 import '../utils/error_reporter.dart';
 
@@ -266,6 +267,7 @@ class _AdminWebShellState extends State<AdminWebShell> {
     ('Class Roster', Icons.calendar_view_month, ClassRosterScreen()),
     ('Facilities', Icons.villa_outlined, FacilityManagementScreen()),
     ('Class Types', Icons.category_outlined, TypeManagementScreen()),
+    ('Trainers', Icons.badge_outlined, TrainerProfilesScreen()),
     ('Plans', Icons.card_membership_outlined, PlanManagementScreen()),
     ('Cancel Classes', Icons.event_busy_outlined, CancelClassesScreen()),
     ('Appointments', Icons.calendar_month_outlined, AppointmentManagementScreen()),

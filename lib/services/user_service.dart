@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/user_model.dart';
+import '../utils/drive_image.dart';
 
 /// One plan's outcome from [UserService.sendRenewalReminderNow] — a user
 /// can hold several concurrently-active plans, so a single button tap can
@@ -143,6 +144,21 @@ class UserService {
     });
   }
 
+  /// Saves a trainer's public coach profile — shown to members from the
+  /// class timetable. [photoUrl] is typically a Google Drive share link,
+  /// stored as Drive's direct image URL so it renders in the app.
+  static Future<void> updateCoachProfile({
+    required String uid,
+    required String photoUrl,
+    required String bio,
+  }) async {
+    final photo = photoUrl.trim();
+    await _db.collection('users').doc(uid).update({
+      'coachPhotoUrl': photo.isEmpty ? FieldValue.delete() : driveDirectImageUrl(photo),
+      'coachBio': bio.trim().isEmpty ? FieldValue.delete() : bio.trim(),
+    });
+  }
+
   /// Creates a pre-registration invitation. When the invited email first
   /// signs in via Google, the login flow consumes this and applies the
   /// pre-set role, phone, and initial credits.
@@ -256,13 +272,37 @@ class UserService {
     List<String> allowedPlanNames = const [],
     Set<String> excludedPlanNames = const {},
     Set<String> preferredPlanNames = const {},
+  }) async =>
+      (await _selectAndDeductManyWithinTx(tx, userRef, 1,
+              allowedPlanNames: allowedPlanNames,
+              excludedPlanNames: excludedPlanNames,
+              preferredPlanNames: preferredPlanNames))
+          .single;
+
+  /// Deducts [count] credits in one transaction — one per attendee when a
+  /// member brings guests on their own credits. Firestore transactions
+  /// can't read after writing, so the user doc is read once and every
+  /// credit is picked in memory (each pick sees the previous ones), then
+  /// written once. Returns each credit's source entry id (null = admin
+  /// pool) in order, for per-booking refunds. Throws if fewer than [count]
+  /// credits are available — nothing is deducted in that case.
+  static Future<List<String?>> _selectAndDeductManyWithinTx(
+    Transaction tx,
+    DocumentReference<Map<String, dynamic>> userRef,
+    int count, {
+    List<String> allowedPlanNames = const [],
+    Set<String> excludedPlanNames = const {},
+    Set<String> preferredPlanNames = const {},
   }) async {
     final snap = await tx.get(userRef);
     final data = snap.data();
     if (data == null) throw StateError('User not found');
     final memberships = _parseMemberships(data);
-    final pooledCredits = data['credits'] as int? ?? 0;
+    var pooledCredits = data['credits'] as int? ?? 0;
     final now = DateTime.now();
+    final sources = <String?>[];
+    var membershipsChanged = false;
+    var pooledUsed = 0;
 
     // An eligible active entry whose date window is genuinely still open
     // (re-checked against `now`, not just `status`, since a rollover-lag
@@ -273,54 +313,111 @@ class UserService {
         m.endDate.isAfter(now) &&
         _isEligiblePlan(m, allowedPlanNames, excludedPlanNames) &&
         m.creditsRemaining > 0;
-    var activeWithCreditsIdx = memberships.indexWhere(
-        (m) => preferredPlanNames.contains(m.planName) && activeWithCredits(m));
-    if (activeWithCreditsIdx == -1) {
-      activeWithCreditsIdx = memberships.indexWhere(activeWithCredits);
-    }
 
-    if (activeWithCreditsIdx != -1) {
-      final entry = memberships[activeWithCreditsIdx];
-      memberships[activeWithCreditsIdx] =
-          entry.copyWith(creditsRemaining: entry.creditsRemaining - 1);
-      tx.update(userRef, {'memberships': _toMaps(memberships)});
-      return entry.id;
-    }
-
-    var queuedIdx = preferredPlanNames.isEmpty
-        ? -1
-        : _earliestQueuedWithCredits(memberships, allowedPlanNames,
-            excludedPlanNames: excludedPlanNames,
-            onlyPlanNames: preferredPlanNames);
-    if (queuedIdx == -1) {
-      queuedIdx = _earliestQueuedWithCredits(memberships, allowedPlanNames,
-          excludedPlanNames: excludedPlanNames);
-    }
-    if (queuedIdx != -1) {
-      final promoted = memberships[queuedIdx];
-      // Step down the entry this one chains behind — same planName only,
-      // never an unrelated plan's active entry.
-      final sameChainActiveIdx = memberships.indexWhere(
-          (m) => m.isActive && m.planName == promoted.planName);
-      if (sameChainActiveIdx != -1 &&
-          memberships[sameChainActiveIdx].endDate.isAfter(now)) {
-        memberships[sameChainActiveIdx] =
-            memberships[sameChainActiveIdx].copyWith(status: 'expired');
+    for (var i = 0; i < count; i++) {
+      var activeWithCreditsIdx = memberships.indexWhere((m) =>
+          preferredPlanNames.contains(m.planName) && activeWithCredits(m));
+      if (activeWithCreditsIdx == -1) {
+        activeWithCreditsIdx = memberships.indexWhere(activeWithCredits);
       }
-      memberships[queuedIdx] = promoted.copyWith(
-        status: 'active',
-        creditsRemaining: promoted.creditsRemaining - 1,
-      );
-      tx.update(userRef, {'memberships': _toMaps(memberships)});
-      return promoted.id;
+
+      if (activeWithCreditsIdx != -1) {
+        final entry = memberships[activeWithCreditsIdx];
+        memberships[activeWithCreditsIdx] =
+            entry.copyWith(creditsRemaining: entry.creditsRemaining - 1);
+        membershipsChanged = true;
+        sources.add(entry.id);
+        continue;
+      }
+
+      var queuedIdx = preferredPlanNames.isEmpty
+          ? -1
+          : _earliestQueuedWithCredits(memberships, allowedPlanNames,
+              excludedPlanNames: excludedPlanNames,
+              onlyPlanNames: preferredPlanNames);
+      if (queuedIdx == -1) {
+        queuedIdx = _earliestQueuedWithCredits(memberships, allowedPlanNames,
+            excludedPlanNames: excludedPlanNames);
+      }
+      if (queuedIdx != -1) {
+        final promoted = memberships[queuedIdx];
+        // Step down the entry this one chains behind — same planName only,
+        // never an unrelated plan's active entry.
+        final sameChainActiveIdx = memberships.indexWhere(
+            (m) => m.isActive && m.planName == promoted.planName);
+        if (sameChainActiveIdx != -1 &&
+            memberships[sameChainActiveIdx].endDate.isAfter(now)) {
+          memberships[sameChainActiveIdx] =
+              memberships[sameChainActiveIdx].copyWith(status: 'expired');
+        }
+        memberships[queuedIdx] = promoted.copyWith(
+          status: 'active',
+          creditsRemaining: promoted.creditsRemaining - 1,
+        );
+        membershipsChanged = true;
+        sources.add(promoted.id);
+        continue;
+      }
+
+      if (pooledCredits > 0) {
+        pooledCredits--;
+        pooledUsed++;
+        sources.add(null);
+        continue;
+      }
+
+      throw StateError('No credits available');
     }
 
-    if (pooledCredits > 0) {
-      tx.update(userRef, {'credits': FieldValue.increment(-1)});
-      return null;
-    }
+    tx.update(userRef, {
+      if (membershipsChanged) 'memberships': _toMaps(memberships),
+      if (pooledUsed > 0) 'credits': FieldValue.increment(-pooledUsed),
+    });
+    return sources;
+  }
 
-    throw StateError('No credits available');
+  /// Like [deductCreditAndWrite], for [count] credits at once: [writeDocs]
+  /// gets one source entry id per credit (see [_selectAndDeductManyWithinTx])
+  /// and writes all the docs in the same transaction — either every
+  /// booking is created with its credit, or none are.
+  static Future<void> deductCreditsAndWrite(
+    String uid,
+    int count,
+    void Function(Transaction tx, List<String?> sourceEntryIds) writeDocs, {
+    List<String> allowedPlanNames = const [],
+    Set<String> excludedPlanNames = const {},
+  }) async {
+    final userRef = _db.collection('users').doc(uid);
+    await _db.runTransaction((tx) async {
+      final sources = await _selectAndDeductManyWithinTx(tx, userRef, count,
+          allowedPlanNames: allowedPlanNames,
+          excludedPlanNames: excludedPlanNames);
+      writeDocs(tx, sources);
+    });
+  }
+
+  /// Read-only count of credits usable for a class right now — active
+  /// plans with an open window, queued plans, and the admin pool — mirroring
+  /// [_selectAndDeductManyWithinTx]'s buckets. Used to cap how many guests a
+  /// member can bring; the deduction transaction remains authoritative.
+  static Future<int> usableCreditCount(
+    String uid, {
+    List<String> allowedPlanNames = const [],
+    Set<String> excludedPlanNames = const {},
+  }) async {
+    final user = await getUser(uid);
+    if (user == null) return 0;
+    final now = DateTime.now();
+    int positive(int n) => n > 0 ? n : 0;
+    final fromActive = user.activeMemberships
+        .where((m) =>
+            _isEligiblePlan(m, allowedPlanNames, excludedPlanNames) &&
+            m.endDate.isAfter(now))
+        .fold<int>(0, (total, m) => total + positive(m.creditsRemaining));
+    final fromQueued = user.queuedMemberships
+        .where((m) => _isEligiblePlan(m, allowedPlanNames, excludedPlanNames))
+        .fold<int>(0, (total, m) => total + positive(m.creditsRemaining));
+    return fromActive + fromQueued + positive(user.credits);
   }
 
   /// Read-only precheck mirroring [deductCredit]'s bucket-selection logic,

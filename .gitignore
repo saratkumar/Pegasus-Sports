@@ -61,3 +61,6 @@ extensions/*.env
 **/node_modules
 
 **/dist
+
+# Local emulator secrets
+functions/.secret.local

@@ -3,6 +3,7 @@ import '../../models/user_model.dart';
 import '../../services/user_service.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
+import '../../widgets/coach_profile.dart';
 import 'family_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -17,19 +18,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _nameCtrl;
   late final TextEditingController _phoneCtrl;
+  late final TextEditingController _coachPhotoCtrl;
+  late final TextEditingController _coachBioCtrl;
   bool _saving = false;
+
+  bool get _isCoach => widget.userModel.isTrainer || widget.userModel.isAdmin;
 
   @override
   void initState() {
     super.initState();
     _nameCtrl = TextEditingController(text: widget.userModel.name);
     _phoneCtrl = TextEditingController(text: widget.userModel.phone ?? '');
+    _coachPhotoCtrl =
+        TextEditingController(text: widget.userModel.coachPhotoUrl ?? '');
+    _coachBioCtrl = TextEditingController(text: widget.userModel.coachBio ?? '');
   }
 
   @override
   void dispose() {
     _nameCtrl.dispose();
     _phoneCtrl.dispose();
+    _coachPhotoCtrl.dispose();
+    _coachBioCtrl.dispose();
     super.dispose();
   }
 
@@ -42,6 +52,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
         name: _nameCtrl.text.trim(),
         phone: _phoneCtrl.text.trim().isEmpty ? null : _phoneCtrl.text.trim(),
       );
+      if (_isCoach) {
+        await UserService.updateCoachProfile(
+          uid: widget.userModel.uid,
+          photoUrl: _coachPhotoCtrl.text,
+          bio: _coachBioCtrl.text,
+        );
+      }
       if (mounted) {
         AppToast.success(context, 'Profile updated');
         Navigator.pop(context);
@@ -136,6 +153,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 style: TextStyle(fontSize: 12, color: AppColors.textMuted),
               ),
             ),
+            if (_isCoach) ...[
+              const SizedBox(height: 24),
+              CoachProfileFields(
+                photoCtrl: _coachPhotoCtrl,
+                bioCtrl: _coachBioCtrl,
+                uploadForUid:
+                    widget.userModel.isAdmin ? widget.userModel.uid : null,
+              ),
+            ],
             const SizedBox(height: 28),
             ElevatedButton(
               onPressed: _saving ? null : _save,

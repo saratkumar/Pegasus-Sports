@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/qr_payment_request_model.dart';
+import '../utils/drive_image.dart';
 import 'config_service.dart';
 import 'invoice_service.dart';
 import 'request_notification_service.dart';
@@ -25,13 +26,7 @@ class QrPaymentService {
   /// an HTML preview page, not the image, so Image.network shows nothing.
   /// Rewrites them to Drive's direct image host (which also sends CORS
   /// headers for the web shop); any other URL is returned unchanged.
-  static String directImageUrl(String url) {
-    final u = url.trim();
-    if (!u.contains('drive.google.com')) return u;
-    final id = RegExp(r'/file/d/([\w-]+)').firstMatch(u)?.group(1) ??
-        RegExp(r'[?&]id=([\w-]+)').firstMatch(u)?.group(1);
-    return id == null ? u : 'https://lh3.googleusercontent.com/d/$id';
-  }
+  static String directImageUrl(String url) => driveDirectImageUrl(url);
 
   static Stream<Map<String, dynamic>?> streamConfig() {
     return _configDoc.snapshots().map((d) => d.data());

@@ -144,7 +144,10 @@ class ClassCancellationService {
       final userName = userDoc.data()?['name']?.toString() ?? uid;
       final userEmail = userDoc.data()?['email']?.toString() ?? '';
       final attendeeName = data['attendeeName'] as String?;
-      final logName = BookingService.attendeeLogName(attendeeName, userName);
+      final guestName = data['guestName'] as String?;
+      final logName = BookingService.attendeeLogName(attendeeName, userName,
+          guestName: guestName);
+      final forName = guestName ?? attendeeName;
 
       if (credits > 0) {
         await UserService.refundCredit(uid,
@@ -169,9 +172,8 @@ class ClassCancellationService {
           await EmailService.sendCancellationEmail(
             email: userEmail,
             clientName: userName,
-            className: attendeeName == null
-                ? className
-                : '$className (for $attendeeName)',
+            className:
+                forName == null ? className : '$className (for $forName)',
             classDate: bookingDate,
             classTime: bookingTime,
             creditsRefunded: credits,

@@ -146,6 +146,10 @@ class UserModel {
   // Plan credits live per-entry in memberships[].creditsRemaining.
   final List<MembershipEntry> memberships;
   final AdminCreditGrant? adminCreditGrant;
+  // Public coach profile for trainers, shown to members from the timetable.
+  // Saved via UserService.updateCoachProfile, never through toFirestore().
+  final String? coachPhotoUrl;
+  final String? coachBio;
 
   UserModel({
     required this.uid,
@@ -159,6 +163,8 @@ class UserModel {
     this.credits = 0,
     this.memberships = const [],
     this.adminCreditGrant,
+    this.coachPhotoUrl,
+    this.coachBio,
   });
 
   bool get isClient => role == 'client';
@@ -233,6 +239,8 @@ class UserModel {
           .toList(),
       adminCreditGrant:
           rawGrant != null ? AdminCreditGrant.fromMap(rawGrant) : null,
+      coachPhotoUrl: data['coachPhotoUrl'] as String?,
+      coachBio: data['coachBio'] as String?,
     );
   }
 

@@ -3,12 +3,14 @@ import 'dart:ui';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'services/deep_link_service.dart';
 import 'services/notifications.dart';
 import 'services/user_service.dart';
 import 'firebase_options.dart';
+import 'utils/emulator.dart';
 import 'utils/app_colors.dart';
 import 'models/user_model.dart';
 import 'navigation/bottom_navigation.dart';
@@ -18,20 +20,30 @@ import 'screens/memberships/memberships_screen.dart';
 // TODO(debug): temporary startup instrumentation to surface the iOS white-screen
 // cause on-device (no Mac/Xcode console available). Remove once root-caused.
 void main() {
+  // Set once the real app is running — after that, uncaught errors are only
+  // reported, never allowed to replace the whole app with the error screen.
+  var appStarted = false;
   runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
     String? startupError;
     try {
       await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform)
           .timeout(const Duration(seconds: 15));
+      await connectToEmulatorsIfEnabled();
       // Routes uncaught Flutter framework errors and, via the
       // runZonedGuarded handler below, uncaught async errors to Crashlytics
       // — must be set up only after Firebase.initializeApp succeeds.
-      FlutterError.onError = FirebaseCrashlytics.instance.recordFlutterFatalError;
-      PlatformDispatcher.instance.onError = (error, stack) {
-        FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
-        return true;
-      };
+      // Crashlytics has no web implementation: hooking it up there turned
+      // every framework error into a MissingPluginException that tore the
+      // app down (see utils/crash_log.dart).
+      if (!kIsWeb) {
+        FlutterError.onError =
+            FirebaseCrashlytics.instance.recordFlutterFatalError;
+        PlatformDispatcher.instance.onError = (error, stack) {
+          FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+          return true;
+        };
+      }
     } catch (e) {
       startupError = 'Firebase.initializeApp failed:\n$e';
     }
@@ -52,12 +64,18 @@ void main() {
     runApp(startupError == null
         ? const FitnessBookingApp()
         : _StartupErrorApp(message: startupError));
+    appStarted = startupError == null;
   }, (error, stack) {
     // Firebase may not be initialized yet if the error happened before/during
     // Firebase.initializeApp — best-effort only, guarded against that.
-    try {
-      FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
-    } catch (_) {}
+    if (kIsWeb) {
+      debugPrint('Uncaught error: $error\n$stack');
+    } else {
+      try {
+        FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+      } catch (_) {}
+    }
+    if (appStarted) return;
     runApp(_StartupErrorApp(message: 'Uncaught error:\n$error\n\n$stack'));
   });
 }

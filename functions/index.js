@@ -20,10 +20,18 @@ exports.dailyMembershipRollover = dailyMembershipRollover;
 exports.dailyRenewalReminders = dailyRenewalReminders;
 exports.sendRenewalReminderNow = sendRenewalReminderNow;
 
+// True when running in the local Firebase emulator (docs/testing-locally.md).
+// Anything that would reach live Stripe or the live Google Sheet is switched
+// off there; Firestore/Auth are the emulator's own copies.
+const IS_EMULATOR = process.env.FUNCTIONS_EMULATOR === "true";
+
 // Lazily initialise Stripe so the secret key is read at call time,
 // not at cold-start (allows key rotation without redeployment).
 let _stripe;
 function getStripe() {
+  if (IS_EMULATOR) {
+    throw new HttpsError("failed-precondition", "Card payments are off in local test mode.");
+  }
   if (!_stripe) {
     const key = process.env.STRIPE_SECRET_KEY;
     if (!key) {
@@ -615,6 +623,10 @@ exports.callAppsScript = onCall({ secrets: ["APPS_SCRIPT_URL"] }, async (request
   }
 
   const { action, params = {} } = request.data;
+  if (IS_EMULATOR) {
+    // Would write test activity into the live Sheet.
+    throw new HttpsError("unavailable", "Activity Log is off in local test mode.");
+  }
   if (!APPS_SCRIPT_ALLOWED_ACTIONS.has(action)) {
     throw new HttpsError("invalid-argument", `Unsupported action: ${action}`);
   }
@@ -655,4 +667,71 @@ exports.callAppsScript = onCall({ secrets: ["APPS_SCRIPT_URL"] }, async (request
   } catch {
     return { data: text };
   }
+});
+
+// ── uploadCoachPhoto ─────────────────────────────────────────────────────────
+// Admin uploads a trainer/admin profile photo from the app. The image is
+// handed to the same Apps Script Web App (doPost, action
+// "upload_coach_photo"), which runs as the Drive owner, saves it into the
+// "Pegasus Coach Photos" folder shared as "anyone with the link", and
+// returns the file id. The app then saves the resulting link plus the
+// description on the user's doc when the admin taps Save.
+const COACH_PHOTO_MAX_BYTES = 5 * 1024 * 1024;
+const COACH_PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/heic"]);
+
+exports.uploadCoachPhoto = onCall({ secrets: ["APPS_SCRIPT_URL"] }, async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Must be signed in.");
+  }
+  if (!(await callerIsAdmin(request.auth.uid))) {
+    throw new HttpsError("permission-denied", "Admin only.");
+  }
+
+  const { uid, mimeType, data } = request.data || {};
+  if (typeof uid !== "string" || !uid || typeof data !== "string" || !data) {
+    throw new HttpsError("invalid-argument", "uid and data are required.");
+  }
+  if (!COACH_PHOTO_TYPES.has(mimeType)) {
+    throw new HttpsError("invalid-argument", "Please choose a JPG, PNG or WebP image.");
+  }
+  if (Buffer.byteLength(data, "base64") > COACH_PHOTO_MAX_BYTES) {
+    throw new HttpsError("invalid-argument", "Photo is too large (max 5 MB).");
+  }
+
+  const coach = await admin.firestore().collection("users").doc(uid).get();
+  const role = coach.data()?.role;
+  if (role !== "trainer" && role !== "admin") {
+    throw new HttpsError("failed-precondition", "That user isn't a trainer or admin.");
+  }
+  const safeName = (coach.data()?.name || uid).replace(/[^\w .-]/g, "").trim() || uid;
+  const ext = mimeType.split("/")[1].replace("jpeg", "jpg");
+
+  // Apps Script answers a POST with a redirect to the result; fetch follows
+  // it as a GET, which is what Apps Script expects.
+  const res = await fetch(process.env.APPS_SCRIPT_URL, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      action: "upload_coach_photo",
+      fileName: `${IS_EMULATOR ? "TEST - " : ""}${safeName} (${uid}).${ext}`,
+      mimeType,
+      data,
+    }),
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!res.ok) {
+    throw new HttpsError("unavailable", `Apps Script returned ${res.status}`);
+  }
+  const text = await res.text();
+  let result;
+  try {
+    result = JSON.parse(text);
+  } catch {
+    throw new HttpsError("internal",
+      "Drive upload isn't set up in the Apps Script yet (got a non-JSON reply).");
+  }
+  if (!result.fileId) {
+    throw new HttpsError("internal", `Drive upload failed: ${result.error || text.slice(0, 200)}`);
+  }
+  return { fileId: result.fileId, url: `https://lh3.googleusercontent.com/d/${result.fileId}` };
 });

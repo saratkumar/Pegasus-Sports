@@ -12,6 +12,7 @@ import 'coupon_management_screen.dart';
 import 'facility_management_screen.dart';
 import 'payment_qr_screen.dart';
 import 'plan_management_screen.dart';
+import 'trainer_profiles_screen.dart';
 import 'type_management_screen.dart';
 
 class AdminHomeScreen extends StatefulWidget {
@@ -113,6 +114,15 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
             title: 'Class Types',
             subtitle: 'Manage types with image auto-mapping',
             page: const TypeManagementScreen(),
+          ),
+          const SizedBox(height: 10),
+          _tile(
+            context,
+            icon: Icons.badge_outlined,
+            color: const Color(0xFF7C4DFF),
+            title: 'Trainers',
+            subtitle: 'Coach photos and descriptions',
+            page: const TrainerProfilesScreen(),
           ),
           const SizedBox(height: 10),
           _tile(

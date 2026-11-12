@@ -281,6 +281,11 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
   DateTime? _specificDate;
   TimeOfDay? _startTimeOfDay;
   TimeOfDay? _endTimeOfDay;
+  // New classes only: further sessions on the same day(s), each with its
+  // own start and end time. Each one is saved as its own class (same
+  // details, its own duration), so every session books, fills and cancels
+  // independently.
+  final List<({TimeOfDay start, TimeOfDay end})> _extraSlots = [];
   bool _isActive = true;
   bool _saving = false;
   bool _loadingData = true;
@@ -388,11 +393,16 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
 
   int? get _durationMinutes {
     if (_startTimeOfDay == null || _endTimeOfDay == null) return null;
-    final startTotal = _startTimeOfDay!.hour * 60 + _startTimeOfDay!.minute;
-    final endTotal = _endTimeOfDay!.hour * 60 + _endTimeOfDay!.minute;
-    final diff = endTotal - startTotal;
+    return _minutesBetween(_startTimeOfDay!, _endTimeOfDay!);
+  }
+
+  /// Minutes from [start] to [end], wrapping past midnight.
+  static int _minutesBetween(TimeOfDay start, TimeOfDay end) {
+    final diff = (end.hour * 60 + end.minute) - (start.hour * 60 + start.minute);
     return diff > 0 ? diff : diff + 24 * 60;
   }
+
+  static int _toMinutes(TimeOfDay t) => t.hour * 60 + t.minute;
 
   Future<void> _pickStartTime() async {
     final picked = await showTimePicker(
@@ -421,6 +431,38 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
       _endTimeOfDay = picked;
       final mins = _durationMinutes;
       _duration.text = mins != null ? _formatDurationMinutes(mins) : '';
+    });
+  }
+
+  /// Picks a start time, then an end time, for one more session.
+  Future<void> _addExtraSlot() async {
+    final lastEnd = _extraSlots.isNotEmpty ? _extraSlots.last.end : _endTimeOfDay;
+    final start = await showTimePicker(
+      context: context,
+      helpText: 'START TIME',
+      initialTime: lastEnd ?? const TimeOfDay(hour: 9, minute: 0),
+    );
+    if (start == null || !mounted) return;
+    final isDuplicate = start == _startTimeOfDay ||
+        _extraSlots.any((s) => s.start == start);
+    if (isDuplicate) {
+      AppToast.warning(context, 'A session at ${_formatTimeOfDay(start)} is already added');
+      return;
+    }
+    final end = await showTimePicker(
+      context: context,
+      helpText: 'END TIME',
+      initialTime: _addMinutes(start, _durationMinutes ?? 60),
+    );
+    if (end == null || !mounted) return;
+    if (end == start) {
+      AppToast.warning(context, 'End time must be different from start time');
+      return;
+    }
+    setState(() {
+      _extraSlots
+        ..add((start: start, end: end))
+        ..sort((a, b) => _toMinutes(a.start).compareTo(_toMinutes(b.start)));
     });
   }
 
@@ -528,25 +570,26 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
             '${_specificDate!.day.toString().padLeft(2, '0')}'
         : null;
 
-    final cls = ClassModel(
-      id: widget.existing?.id,
-      day: dayValue,
-      mode: _mode.text.trim(),
-      coach: coachName,
-      location: locationLabel,
-      facilityId: _selectedFacilityId,
-      groupSize: _groupSize.text.trim(),
-      duration: _duration.text.trim(),
-      detailLocation: detailLabel,
-      startTime: _startTime.text.trim(),
-      type: _type,
-      image: _typeImages[_type] ?? '',
-      description: _description.text.trim(),
-      isActive: _isActive,
-      occurrence: _occurrence,
-      specificDate: specificDateStr,
-      allowedPlanNames: _selectedPlanNames.toList(),
-    );
+    ClassModel buildClass(String startTime, String duration) => ClassModel(
+          id: widget.existing?.id,
+          day: dayValue,
+          mode: _mode.text.trim(),
+          coach: coachName,
+          location: locationLabel,
+          facilityId: _selectedFacilityId,
+          groupSize: _groupSize.text.trim(),
+          duration: duration,
+          detailLocation: detailLabel,
+          startTime: startTime,
+          type: _type,
+          image: _typeImages[_type] ?? '',
+          description: _description.text.trim(),
+          isActive: _isActive,
+          occurrence: _occurrence,
+          specificDate: specificDateStr,
+          allowedPlanNames: _selectedPlanNames.toList(),
+        );
+    final cls = buildClass(_startTime.text.trim(), _duration.text.trim());
 
     try {
       final isEdit = widget.existing?.id != null;
@@ -563,11 +606,23 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
         }
       } else {
         await ClassService.createClass(cls);
+        for (final slot in _extraSlots) {
+          await ClassService.createClass(buildClass(
+            _formatTimeOfDay(slot.start),
+            _formatDurationMinutes(_minutesBetween(slot.start, slot.end)),
+          ));
+        }
       }
       if (mounted) {
+        final created = 1 + _extraSlots.length;
         Navigator.pop(context);
-        AppToast.success(context,
-            widget.existing == null ? 'Class created' : 'Class updated');
+        AppToast.success(
+            context,
+            widget.existing != null
+                ? 'Class updated'
+                : created == 1
+                    ? 'Class created'
+                    : '$created classes created (one per time slot)');
       }
     } catch (err, st) {
       setState(() => _saving = false);
@@ -642,6 +697,10 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
                               fontSize: 12, color: AppColors.textMuted)),
                     ]),
                   ],
+                  if (widget.existing == null) ...[
+                    const SizedBox(height: 8),
+                    _extraSlotsSection(),
+                  ],
                   const SizedBox(height: 12),
                   _field(_groupSize, 'Capacity',
                       required: true,
@@ -714,6 +773,45 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
   }
 
   // ── Sub-widgets ──────────────────────────────────────────────────────────
+
+  Widget _extraSlotsSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (_extraSlots.isNotEmpty) ...[
+          const Text(
+            'Also at',
+            style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              for (final slot in _extraSlots)
+                InputChip(
+                  label: Text(
+                    '${_formatTimeOfDay(slot.start)} – ${_formatTimeOfDay(slot.end)}'
+                    ' · ${_formatDurationMinutes(_minutesBetween(slot.start, slot.end))}',
+                  ),
+                  onDeleted: () => setState(() => _extraSlots.remove(slot)),
+                ),
+            ],
+          ),
+        ],
+        TextButton.icon(
+          onPressed: _startTimeOfDay == null ? null : _addExtraSlot,
+          icon: const Icon(Icons.add, size: 18),
+          label: const Text('Add another time slot'),
+        ),
+        if (_extraSlots.isNotEmpty)
+          const Text(
+            'Each time slot is created as its own class, so members book each one separately.',
+            style: TextStyle(fontSize: 11, color: AppColors.textMuted),
+          ),
+      ],
+    );
+  }
 
   Widget _typeDropdown() {
     if (_types.isEmpty) {

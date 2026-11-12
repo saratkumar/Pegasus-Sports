@@ -137,7 +137,8 @@ class _BookingsTab extends StatelessWidget {
         userId: uid,
         userName: BookingService.attendeeLogName(
             data['attendeeName'] as String?,
-            FirebaseAuth.instance.currentUser?.displayName ?? uid),
+            FirebaseAuth.instance.currentUser?.displayName ?? uid,
+            guestName: data['guestName'] as String?),
         bookedByRole: data['bookedByRole']?.toString() ?? 'client',
         creditsUsed: creditsUsed,
         bookingId: id,
@@ -270,6 +271,7 @@ class _BookingsTab extends StatelessWidget {
     final bookedByRole = data['bookedByRole']?.toString();
     final credits = data['creditsUsed'] as int? ?? 1;
     final attendeeName = data['attendeeName'] as String?;
+    final guestName = data['guestName'] as String?;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -336,6 +338,8 @@ class _BookingsTab extends StatelessWidget {
                       children: [
                         if (attendeeName != null)
                           _chip(Icons.child_care, 'For $attendeeName'),
+                        if (guestName != null)
+                          _chip(Icons.person_add_alt_1, 'Guest: $guestName'),
                         _chip(Icons.calendar_today_outlined, dateStr),
                         _chip(Icons.schedule, time),
                         _chip(Icons.label_outline, type),
