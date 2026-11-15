@@ -14,6 +14,7 @@ import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
 import '../../utils/time_utils.dart';
 import '../../widgets/junior_info_sheet.dart';
+import '../../widgets/session_admin_actions.dart';
 import '../../widgets/timeline_range_selector.dart' show formatWithWeekday;
 
 /// Google Calendar/Outlook-style month (default) or week view of scheduled
@@ -121,13 +122,29 @@ class _ClassRosterScreenState extends State<ClassRosterScreen> {
   /// then layers on roster membership from the Sheet mirror [rows].
   List<_ClassGroup> _buildRoster(
       List<ClassModel> scheduled, List<Map<String, String>> rows) {
-    final cancelledIds = <String>{};
-    for (final r in rows) {
+    // A booking's latest event for this class decides whether it's on the
+    // roster: rows arrive in the order they were logged, so a booking that
+    // was cancelled, or moved away by a reschedule, drops off — and one
+    // rescheduled *into* this day (a later "Booked" row) comes back.
+    const removedTypes = {
+      'Cancelled by Client',
+      'Cancelled by Trainer',
+      'Session Cancelled by Admin',
+      'Session Rescheduled by Admin',
+    };
+    final latestIsActive = <String, bool>{};
+    final latestRowIndex = <String, int>{};
+    for (var i = 0; i < rows.length; i++) {
+      final r = rows[i];
       final type = r['eventType'] ?? '';
       final bid = r['bookingId'] ?? '';
-      if (bid.isNotEmpty &&
-          (type == 'Cancelled by Client' || type == 'Cancelled by Trainer')) {
-        cancelledIds.add(bid);
+      if (bid.isEmpty) continue;
+      final key = '$bid|${r['classId'] ?? ''}';
+      if (type == 'Booked' || type == 'Admitted from Waitlist') {
+        latestIsActive[key] = true;
+        latestRowIndex[key] = i;
+      } else if (removedTypes.contains(type)) {
+        latestIsActive[key] = false;
       }
     }
 
@@ -145,11 +162,16 @@ class _ClassRosterScreenState extends State<ClassRosterScreen> {
       );
     }
 
-    for (final r in rows) {
+    for (var i = 0; i < rows.length; i++) {
+      final r = rows[i];
       final type = r['eventType'] ?? '';
       if (type != 'Booked' && type != 'Admitted from Waitlist') continue;
       final bid = r['bookingId'] ?? '';
-      if (bid.isNotEmpty && cancelledIds.contains(bid)) continue;
+      if (bid.isNotEmpty) {
+        final key = '$bid|${r['classId'] ?? ''}';
+        // Skip removed bookings, and older duplicate "Booked" rows.
+        if (latestIsActive[key] != true || latestRowIndex[key] != i) continue;
+      }
 
       final classId = r['classId'] ?? '';
       final group = groups.putIfAbsent(
@@ -179,6 +201,10 @@ class _ClassRosterScreenState extends State<ClassRosterScreen> {
       return p == null ? 24 * 60 : p.hour * 60 + p.minute;
     }
 
+    for (final g in groups.values) {
+      g.members.sort((a, b) =>
+          a.userName.toLowerCase().compareTo(b.userName.toLowerCase()));
+    }
     final list = groups.values.toList()
       ..sort((a, b) => minutes(a.sessionTime).compareTo(minutes(b.sessionTime)));
     return list;
@@ -221,6 +247,19 @@ class _ClassRosterScreenState extends State<ClassRosterScreen> {
       ));
     });
     AppToast.success(context, 'Booked ${booked.name} into ${group.className}');
+  }
+
+  Future<void> _manageSession(_ClassGroup group) async {
+    final cls = _findClass(group.classId);
+    if (cls == null) {
+      AppToast.error(context, 'Could not find this class — try refreshing');
+      return;
+    }
+    final changed =
+        await showSessionAdminActions(context, cls: cls, date: _selectedDay);
+    if (!changed || !mounted) return;
+    await _loadClasses();
+    if (mounted) _load();
   }
 
   @override
@@ -376,6 +415,10 @@ class _ClassRosterScreenState extends State<ClassRosterScreen> {
                 separatorBuilder: (_, __) => const SizedBox(height: 8),
                 itemBuilder: (context, i) => _GroupCard(
                   group: _groups[i],
+                  onManage: _classesLoading ||
+                          _findClass(_groups[i].classId) == null
+                      ? null
+                      : () => _manageSession(_groups[i]),
                   onBookForClient: _classesLoading
                       ? null
                       : () => _openBookForClient(_groups[i]),
@@ -424,10 +467,12 @@ class _GroupCard extends StatelessWidget {
   final _ClassGroup group;
   final VoidCallback? onBookForClient;
   final VoidCallback onShowJuniors;
+  final VoidCallback? onManage;
   const _GroupCard({
     required this.group,
     this.onBookForClient,
     required this.onShowJuniors,
+    this.onManage,
   });
 
   @override
@@ -498,6 +543,12 @@ class _GroupCard extends StatelessWidget {
                         size: 16),
                     label: const Text('Juniors & medical info'),
                   ),
+                  if (onManage != null)
+                    TextButton.icon(
+                      onPressed: onManage,
+                      icon: const Icon(Icons.event_repeat, size: 16),
+                      label: const Text('Reschedule / Cancel'),
+                    ),
                 ],
               ),
             ),

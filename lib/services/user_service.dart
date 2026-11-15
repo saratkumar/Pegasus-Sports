@@ -100,17 +100,25 @@ class UserService {
 
   static Future<List<UserModel>> getAllUsers() async {
     final snap = await _db.collection('users').get();
-    return snap.docs
+    return sortByName(snap.docs
         .map((d) => UserModel.fromFirestore(d.data(), d.id))
-        .toList();
+        .toList());
   }
 
   static Future<List<UserModel>> getUsersByRole(String role) async {
     final snap =
         await _db.collection('users').where('role', isEqualTo: role).get();
-    return snap.docs
+    return sortByName(snap.docs
         .map((d) => UserModel.fromFirestore(d.data(), d.id))
-        .toList();
+        .toList());
+  }
+
+  /// Alphabetical by name (case-insensitive), falling back to email for
+  /// accounts with no name — the order every user/client list shows.
+  static List<UserModel> sortByName(List<UserModel> users) {
+    String key(UserModel u) =>
+        (u.name.trim().isNotEmpty ? u.name : u.email).trim().toLowerCase();
+    return users..sort((a, b) => key(a).compareTo(key(b)));
   }
 
   static Future<void> updateRole(

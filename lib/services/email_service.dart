@@ -91,4 +91,59 @@ class EmailService {
       },
     });
   }
+
+  /// Sent when an admin moves a booked session to a new date/time (see
+  /// ClassRescheduleService). The booking itself has already moved — no
+  /// credits change — so the copy states the new time as fact and attaches
+  /// a calendar invite for it.
+  static Future<void> sendRescheduleEmail({
+    required String email,
+    required String clientName,
+    required String className,
+    required DateTime oldDate,
+    required String oldTime,
+    required DateTime newDate,
+    required String newTime,
+    String location = '',
+    int durationMinutes = 60,
+  }) async {
+    String fmt(DateTime d) =>
+        '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+    final sessionStart = combineDateAndTime(newDate, newTime);
+
+    await FirebaseFirestore.instance.collection('mail').add({
+      'to': [email],
+      'message': {
+        'subject': 'Session Rescheduled — $className (now ${fmt(newDate)} $newTime)',
+        'html': '''
+          <div style="font-family: sans-serif; color: #0A0A0A;">
+            <h2 style="color: #FF7A00;">Session Rescheduled</h2>
+            <p>Hi $clientName,</p>
+            <p>Your <strong>$className</strong> session has been moved:</p>
+            <p>
+              <span style="text-decoration: line-through; color: #888;">${fmt(oldDate)} at $oldTime</span><br>
+              <strong>${fmt(newDate)} at $newTime</strong>
+            </p>
+            <p>Your booking has been moved automatically — no credits were used or refunded.
+               If the new time doesn't suit you, you can cancel it in the app.</p>
+            <p>See you there!</p>
+          </div>
+        ''',
+        if (sessionStart != null)
+          'attachments': [
+            {
+              'filename': 'invite.ics',
+              'content': base64Encode(utf8.encode(IcsBuilder.build(
+                summary: className,
+                start: sessionStart,
+                durationMinutes: durationMinutes,
+                location: location,
+              ))),
+              'encoding': 'base64',
+              'contentType': 'text/calendar; charset=utf-8; method=REQUEST',
+            },
+          ],
+      },
+    });
+  }
 }

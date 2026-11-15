@@ -13,9 +13,9 @@ import '../screens/trainer/trainer_history_screen.dart';
 import '../screens/trainer/trainer_requests_screen.dart';
 import '../screens/admin/admin_home_screen.dart';
 import '../screens/admin/admin_requests_screen.dart';
+import '../screens/admin/class_roster_screen.dart';
 import '../screens/admin/user_management_screen.dart';
 import '../screens/admin/transactions_screen.dart';
-import '../screens/admin/activity_log_screen.dart';
 import '../screens/profile/profile_screen.dart';
 import '../utils/app_colors.dart';
 
@@ -86,8 +86,8 @@ class _BottomNavState extends State<BottomNav> {
       case 'admin':
         return [
           const UserManagementScreen(),
+          const ClassRosterScreen(),
           const TransactionsScreen(),
-          const ActivityLogScreen(),
           const AdminRequestsScreen(),
           AdminHomeScreen(userModel: widget.userModel),
         ];
@@ -115,17 +115,17 @@ class _BottomNavState extends State<BottomNav> {
             selectedIcon: Icon(Icons.people, color: AppColors.primary),
             label: 'Users',
           ),
+          const NavigationDestination(
+            icon: Icon(Icons.groups_outlined, color: Color(0xFF666666)),
+            selectedIcon: Icon(Icons.groups, color: AppColors.primary),
+            label: 'Roster',
+          ),
           NavigationDestination(
             icon: const Icon(Icons.receipt_long_outlined,
                 color: Color(0xFF666666)),
             selectedIcon: const Icon(Icons.receipt_long,
                 color: AppColors.primary),
             label: compact ? 'Trans' : 'Transactions',
-          ),
-          NavigationDestination(
-            icon: const Icon(Icons.history, color: Color(0xFF666666)),
-            selectedIcon: const Icon(Icons.history, color: AppColors.primary),
-            label: compact ? 'Log' : 'Activity Log',
           ),
           NavigationDestination(
             icon: const Icon(Icons.inbox_outlined, color: Color(0xFF666666)),

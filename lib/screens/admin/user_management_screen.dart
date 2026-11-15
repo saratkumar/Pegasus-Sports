@@ -74,7 +74,8 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                 }
 
                 final me = FirebaseAuth.instance.currentUser?.uid;
-                users = users.where((u) => u.uid != me).toList();
+                users = UserService.sortByName(
+                    users.where((u) => u.uid != me).toList());
 
                 if (users.isEmpty) {
                   return const Center(

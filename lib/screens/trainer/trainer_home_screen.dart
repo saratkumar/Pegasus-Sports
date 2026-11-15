@@ -16,6 +16,7 @@ import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
 import '../../widgets/junior_info_sheet.dart';
 import '../../utils/error_reporter.dart';
+import '../../utils/time_utils.dart';
 
 class TrainerHomeScreen extends StatefulWidget {
   const TrainerHomeScreen({super.key});
@@ -60,7 +61,13 @@ class _TrainerHomeScreenState extends State<TrainerHomeScreen> {
         if (!cls.isActive) return false;
         if (cls.isCancelledOn(_selectedDate)) return false;
         return _matchesDate(cls, _selectedDate);
-      }).toList();
+      }).toList()
+        ..sort((a, b) => _minutesOf(a.startTime).compareTo(_minutesOf(b.startTime)));
+
+  static int _minutesOf(String time) {
+    final t = parseTimeString(time);
+    return t == null ? 24 * 60 : t.hour * 60 + t.minute;
+  }
 
   static bool _matchesDate(ClassModel cls, DateTime date) {
     final dayName = _dayNames[date.weekday - 1];

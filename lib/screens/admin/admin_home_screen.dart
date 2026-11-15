@@ -7,13 +7,13 @@ import 'backup_screen.dart';
 import 'cancel_classes_screen.dart';
 import 'cash_payment_screen.dart';
 import 'class_management_screen.dart';
-import 'class_roster_screen.dart';
 import 'coupon_management_screen.dart';
 import 'facility_management_screen.dart';
 import 'payment_qr_screen.dart';
 import 'plan_management_screen.dart';
 import 'trainer_profiles_screen.dart';
 import 'type_management_screen.dart';
+import 'activity_log_screen.dart';
 
 class AdminHomeScreen extends StatefulWidget {
   final UserModel? userModel;
@@ -80,6 +80,15 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
         children: [
           _SectionHeader('Manage'),
           const SizedBox(height: 12),
+          _tile(
+            context,
+            icon: Icons.history,
+            color: AppColors.primary,
+            title: 'Activity Log',
+            subtitle: 'Bookings, cancellations and credit changes',
+            page: const ActivityLogScreen(),
+          ),
+          const SizedBox(height: 10),
           _tile(
             context,
             icon: Icons.fitness_center,
@@ -169,19 +178,6 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
             subtitle: 'Configure the QR shown at checkout as an alternative to card',
             page: const PaymentQrScreen(),
           ),
-          if (widget.userModel?.isSuperAdmin == true) ...[
-            const SizedBox(height: 22),
-            _SectionHeader('Reports'),
-            const SizedBox(height: 12),
-            _tile(
-              context,
-              icon: Icons.groups_outlined,
-              color: const Color(0xFF00D4AA),
-              title: 'Class Roster',
-              subtitle: 'Who signed up for which class, by day',
-              page: const ClassRosterScreen(),
-            ),
-          ],
           // Backup menu hidden for now — BackupScreen/CleanupService are
           // untouched, just not linked from the menu.
         ],

@@ -5,6 +5,7 @@ import '../../models/user_model.dart';
 import '../../services/class_service.dart';
 import '../../services/user_service.dart';
 import '../../utils/app_colors.dart';
+import '../../utils/time_utils.dart';
 
 class TrainerHistoryScreen extends StatefulWidget {
   const TrainerHistoryScreen({super.key});
@@ -56,6 +57,18 @@ class _TrainerHistoryScreenState extends State<TrainerHistoryScreen> {
           }
         }
       }
+
+      int minutesOf(String time) {
+        final t = parseTimeString(time);
+        return t == null ? 24 * 60 : t.hour * 60 + t.minute;
+      }
+
+      past.sort((a, b) {
+        final byDate = b.date.compareTo(a.date);
+        return byDate != 0
+            ? byDate
+            : minutesOf(a.cls.startTime).compareTo(minutesOf(b.cls.startTime));
+      });
 
       if (!mounted) return;
       setState(() {
