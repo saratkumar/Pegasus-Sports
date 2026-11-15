@@ -12,6 +12,7 @@ import '../../services/user_service.dart';
 import '../../services/waiting_list_service.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
+import '../../utils/time_utils.dart';
 import '../../widgets/junior_info_sheet.dart';
 import '../../widgets/timeline_range_selector.dart' show formatWithWeekday;
 
@@ -130,9 +131,13 @@ class _ClassRosterScreenState extends State<ClassRosterScreen> {
       }
     }
 
+    // Keyed by class only: each class doc has a single start time (a class
+    // run at several times is saved as one class per time). The Sheet's
+    // sessionTime can't be trusted for matching — Google Sheets turns
+    // "7:00 PM" into a time value that comes back as "1899-12-30T…".
     final groups = <String, _ClassGroup>{};
     for (final cls in scheduled) {
-      final key = '${cls.effectiveId}|${cls.startTime}';
+      final key = cls.effectiveId;
       groups[key] = _ClassGroup(
         classId: cls.effectiveId,
         className: cls.mode,
@@ -147,15 +152,20 @@ class _ClassRosterScreenState extends State<ClassRosterScreen> {
       if (bid.isNotEmpty && cancelledIds.contains(bid)) continue;
 
       final classId = r['classId'] ?? '';
-      final sessionTime = r['sessionTime'] ?? '';
-      final key = '$classId|$sessionTime';
       final group = groups.putIfAbsent(
-        key,
-        () => _ClassGroup(
-          classId: classId,
-          className: r['className'] ?? '',
-          sessionTime: sessionTime,
-        ),
+        classId,
+        // A booking for a class no longer scheduled this day (e.g. its day
+        // was changed after people booked) — still listed so it isn't lost.
+        () {
+          final cls = _findClass(classId);
+          final raw = r['sessionTime'] ?? '';
+          return _ClassGroup(
+            classId: classId,
+            className: cls?.mode ?? r['className'] ?? '',
+            sessionTime: cls?.startTime ??
+                (parseTimeString(raw) != null ? raw : ''),
+          );
+        },
       );
       group.members.add(_RosterEntry(
         userName: r['userName']?.isNotEmpty == true ? r['userName']! : 'Unknown',
@@ -164,8 +174,13 @@ class _ClassRosterScreenState extends State<ClassRosterScreen> {
       ));
     }
 
+    int minutes(String t) {
+      final p = parseTimeString(t);
+      return p == null ? 24 * 60 : p.hour * 60 + p.minute;
+    }
+
     final list = groups.values.toList()
-      ..sort((a, b) => a.sessionTime.compareTo(b.sessionTime));
+      ..sort((a, b) => minutes(a.sessionTime).compareTo(minutes(b.sessionTime)));
     return list;
   }
 
