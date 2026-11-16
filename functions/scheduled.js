@@ -171,6 +171,8 @@ exports.dailyRenewalReminders = onSchedule(
     const usersSnap = await db.collection("users").get();
 
     for (const doc of usersSnap.docs) {
+      // Deactivated accounts can't sign in to renew — don't email them.
+      if (doc.get("isActive") === false) continue;
       await sendRenewalReminderForUser(db, doc.ref, doc.data(), { requireWindow: true });
     }
   }

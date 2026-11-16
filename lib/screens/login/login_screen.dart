@@ -58,6 +58,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _signInWithGoogle() async {
     if (!_ensureAgreed()) return;
+    UserService.accessDenied.value = null;
     setState(() => _loading = true);
     try {
       // google_sign_in's interactive signIn() doesn't work on Flutter Web
@@ -90,6 +91,9 @@ class _LoginScreenState extends State<LoginScreen> {
       final result =
           await FirebaseAuth.instance.signInWithCredential(credential);
       await _upsertUserAndFinish(result);
+    } on NotInvitedException {
+      // UserService already signed out and set accessDenied — the banner
+      // above the buttons explains it; no error report needed.
     } catch (e, st) {
       if (mounted) {
         reportError(
@@ -106,6 +110,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _signInWithApple() async {
     if (!_ensureAgreed()) return;
+    UserService.accessDenied.value = null;
     setState(() => _loading = true);
     try {
       final rawNonce = _generateNonce();
@@ -156,6 +161,9 @@ class _LoginScreenState extends State<LoginScreen> {
           reason: 'Apple sign-in authorization failed',
         );
       }
+    } on NotInvitedException {
+      // UserService already signed out and set accessDenied — the banner
+      // above the buttons explains it; no error report needed.
     } catch (e, st) {
       if (mounted) {
         reportError(
@@ -256,6 +264,12 @@ class _LoginScreenState extends State<LoginScreen> {
                     ],
                   ),
                   const SizedBox(height: 40),
+                  ValueListenableBuilder<AccessDenial?>(
+                    valueListenable: UserService.accessDenied,
+                    builder: (context, denied, _) => denied == null
+                        ? const SizedBox.shrink()
+                        : _NotInvitedBanner(denial: denied),
+                  ),
                   _termsCheckbox(),
                   const SizedBox(height: 16),
                   if (_loading)
@@ -457,6 +471,51 @@ class _AppleButton extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Shown after a sign-in is refused: the email isn't invited (sign-up is
+/// invite-only) or the account was deactivated by an admin.
+class _NotInvitedBanner extends StatelessWidget {
+  final AccessDenial denial;
+  const _NotInvitedBanner({required this.denial});
+
+  String get _message {
+    final who = denial.email.isEmpty ? 'This account' : denial.email;
+    if (denial.deactivated) {
+      return "$who is currently inactive. Please contact the gym to reactivate your membership.";
+    }
+    return denial.email.isEmpty
+        ? "This account isn't registered with PSAS. Please contact the gym to get access."
+        : "$who isn't registered with PSAS. Please contact the gym to get access, or sign in with the email you registered with.";
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 20),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.red.withValues(alpha: 0.08),
+        border: Border.all(color: Colors.red.withValues(alpha: 0.35)),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.lock_outline, color: Colors.red, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              _message,
+              style: const TextStyle(
+                  fontSize: 13, color: AppColors.textPrimary, height: 1.4),
+            ),
+          ),
+        ],
       ),
     );
   }

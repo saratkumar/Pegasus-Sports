@@ -16,12 +16,30 @@ service cloud.firestore {
         : 'none';
     }
 
+    // A signed-in caller who actually has a profile. Sign-up is invite-only
+    // (see the users/{uid} create rule), so this is what separates real
+    // members from strangers who merely completed Google/Apple sign-in, and
+    // from the web shop's anonymous browsing sessions. Use it for anything
+    // that writes or raises work for staff; plain isSignedIn() stays only on
+    // public catalog reads the anonymous web shop needs.
+    // Deactivated accounts (isActive == false, set by an admin) keep their
+    // doc and history but lose member access until reactivated.
+    function isMember() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isActive', true) != false;
+    }
+
+    function myEmail() {
+      return request.auth.token.get('email', '').lower();
+    }
+
     function isStaff() {
-      return isSignedIn() && callerRole() in ['trainer', 'admin'];
+      return isMember() && callerRole() in ['trainer', 'admin'];
     }
 
     function isAdmin() {
-      return isSignedIn() && callerRole() == 'admin';
+      return isMember() && callerRole() == 'admin';
     }
 
     // Mirrors the hardcoded bootstrap list in login_screen.dart
@@ -45,7 +63,7 @@ service cloud.firestore {
       // emailing an arbitrary address. The real fix is moving this queue
       // write into a Cloud Function so the client never touches `mail`
       // directly; recommended before a public (non-beta) launch.
-      allow create: if isSignedIn() &&
+      allow create: if isMember() &&
         request.resource.data.keys().hasOnly(['to', 'message']) &&
         request.resource.data.to is list &&
         request.resource.data.to.size() == 1 &&
@@ -57,14 +75,49 @@ service cloud.firestore {
 
     // ── User profiles ────────────────────────────────────────────────────
     match /users/{uid} {
-      allow read: if isSignedIn();
+      // Members read everyone (rosters, trainer lists). Non-members may only
+      // read their own doc, imported Glofox docs with their own email (the
+      // first-sign-in handover lookup), and staff docs (the anonymous web
+      // shop timetable lists trainers).
+      allow read: if isMember() || (
+        isSignedIn() && (
+          request.auth.uid == uid ||
+          resource.data.role in ['trainer', 'admin'] ||
+          (myEmail() != '' && resource.data.email == myEmail())
+        )
+      );
 
-      // Anyone can create their own doc (needed for first-login / invitation
-      // consumption in login_screen.dart), but only admins can change an
-      // EXISTING user's role/adminLevel/adminPermissions — closes the
-      // self-promotion hole where a client could set role: 'admin' on
-      // themselves via a normal profile write.
-      allow create: if isSignedIn() && request.auth.uid == uid;
+      // Sign-up is INVITE-ONLY: a first-time profile may only be created
+      // when the caller's verified email has an admin invitation, or the
+      // caller is claiming an importedPending Glofox doc with that same
+      // email (onUserCreated then moves its data across). Its role must be
+      // the invitation's (or 'client'), so nobody can self-create as admin.
+      // Only admins can change an EXISTING user's role/adminLevel/
+      // adminPermissions (see update below).
+      function inviteRef() {
+        return /databases/$(database)/documents/invitations/$(myEmail());
+      }
+      function invitedRoleOk() {
+        return request.resource.data.get('role', 'client') == get(inviteRef()).data.get('role', 'client') &&
+          request.resource.data.get('adminLevel', null) == get(inviteRef()).data.get('adminLevel', null);
+      }
+      function claimsImportedDoc() {
+        return request.resource.data.get('importedFrom', '') is string &&
+          request.resource.data.get('importedFrom', '') != '' &&
+          get(/databases/$(database)/documents/users/$(request.resource.data.importedFrom)).data.get('importedPending', false) == true &&
+          get(/databases/$(database)/documents/users/$(request.resource.data.importedFrom)).data.get('email', '') == myEmail() &&
+          request.resource.data.get('role', 'client') == 'client' &&
+          !('adminLevel' in request.resource.data);
+      }
+      allow create: if isSignedIn() && request.auth.uid == uid &&
+        myEmail() != '' &&
+        request.auth.token.get('email_verified', false) == true &&
+        request.resource.data.get('adminPermissions', []) == [] &&
+        (
+          (exists(inviteRef()) && invitedRoleOk()) ||
+          claimsImportedDoc() ||
+          isDesignatedSuperAdmin()
+        );
       allow update: if isSignedIn() && (
         isAdmin() ||
         // NOTE: `credits`/`memberships` are deliberately NOT denylisted
@@ -82,7 +135,7 @@ service cloud.firestore {
         (
           request.auth.uid == uid &&
           !request.resource.data.diff(resource.data).affectedKeys()
-            .hasAny(['role', 'adminLevel', 'adminPermissions'])
+            .hasAny(['role', 'adminLevel', 'adminPermissions', 'isActive'])
         ) ||
         (
           request.auth.uid == uid &&
@@ -113,7 +166,7 @@ service cloud.firestore {
           return ['verificationStatus', 'verifiedAt', 'verifiedBy'];
         }
         allow read: if isSignedIn() && (request.auth.uid == uid || isStaff());
-        allow create: if isSignedIn() && validChild() && (
+        allow create: if isMember() && validChild() && (
           isAdmin() ||
           (
             request.auth.uid == uid &&
@@ -149,8 +202,16 @@ service cloud.firestore {
     // Properly closing this needs an app-level change (e.g. a denormalized
     // count field on the class doc, or moving admission into a Cloud
     // Function) rather than a rules-only fix. Flagging as follow-up work.
-    match /bookings/{docId} { allow read, write: if isSignedIn(); }
-    match /waitingList/{docId} { allow read, write: if isSignedIn(); }
+    // Reads stay open to the anonymous web shop (capacity counts); writes
+    // need a real member.
+    match /bookings/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isMember();
+    }
+    match /waitingList/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isMember();
+    }
 
     // ── Class catalog — admin manages, everyone reads ─────────────────────
     match /classes/{docId} {
@@ -174,7 +235,7 @@ service cloud.firestore {
     match /coupons/{docId} {
       allow read: if isSignedIn();
       allow create, delete: if isAdmin();
-      allow update: if isSignedIn() &&
+      allow update: if isMember() &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['redeemedCount']) &&
         request.resource.data.redeemedCount == resource.data.redeemedCount + 1;
     }
@@ -182,7 +243,7 @@ service cloud.firestore {
     // ── Requests — trainers/clients create their own, staff resolve ──────
     match /adminRequests/{docId} {
       allow read: if isSignedIn() && (resource.data.requestedBy == request.auth.uid || isStaff());
-      allow create: if isSignedIn() && request.resource.data.requestedBy == request.auth.uid;
+      allow create: if isMember() && request.resource.data.requestedBy == request.auth.uid;
       allow update: if isStaff();
       allow delete: if isSignedIn() && (resource.data.requestedBy == request.auth.uid || isStaff());
     }
@@ -202,7 +263,7 @@ service cloud.firestore {
       // approval flows (qr_payment_service.dart, cash_payment_screen.dart)
       // create this doc on behalf of the CLIENT being approved, so
       // clientUid != request.auth.uid in that case.
-      allow create: if isSignedIn() &&
+      allow create: if isMember() &&
         (request.resource.data.clientUid == request.auth.uid || isAdmin());
       allow update: if isAdmin() || (
         isSignedIn() &&
@@ -240,7 +301,7 @@ service cloud.firestore {
       // up via the linked adminRequests doc), so one client can't grief
       // another by clearing their active claim.
       allow update: if isAdmin() || (
-        isSignedIn() &&
+        isMember() &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['activeRequestId']) &&
         (
           (resource.data.activeRequestId == null && request.resource.data.activeRequestId is string) ||
@@ -259,7 +320,7 @@ service cloud.firestore {
 
     match /qrPaymentRequests/{docId} {
       allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() &&
+      allow create: if isMember() &&
         request.resource.data.userId == request.auth.uid &&
         request.resource.data.status == "pending";
       allow update, delete: if isAdmin();

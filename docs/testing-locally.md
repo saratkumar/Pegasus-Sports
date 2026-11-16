@@ -10,8 +10,18 @@ photo uploads go to the real "Pegasus Coach Photos" Drive folder, named
 
 - Firebase CLI: `npm install -g firebase-tools`, then `firebase login`
 - Java 21 or newer (already installed)
-- `functions/.secret.local` (already created, never committed): local copies
-  of the function secrets. The Stripe values in it are dummies on purpose.
+- `functions/.secret.local` (never committed, so create it on each PC):
+  dummy values for the function secrets, so the functions emulator never
+  fetches the real ones from production:
+
+  ```
+  STRIPE_SECRET_KEY=sk_test_dummy_local_emulator_only
+  STRIPE_PUBLISHABLE_KEY=pk_test_dummy_local_emulator_only
+  APPS_SCRIPT_URL=http://127.0.0.1:9/apps-script-disabled-in-local-test
+  ```
+
+  With the dummy APPS_SCRIPT_URL, coach photo upload fails in test mode.
+  Put the real URL there only if you need to test that upload.
 - `npm install` inside `functions/` (already done)
 
 ## Each test session
@@ -50,9 +60,26 @@ of Google's. Choose **Add new account** and enter one of these emails:
 | client2@test.com | client | 1 |
 | trainer@test.com | trainer | 0 |
 | admin@test.com | admin | 0 |
+| glofox@test.com | client (imported from Glofox, no invitation) | 3 |
 
 Each email works once per session (the invitation is used up on first sign-in).
-Any other email signs in as a plain client with 0 credits.
+
+Sign-up is **invite-only**, so any other email is refused with
+"… isn't registered with PSAS". To let someone new in, sign in as
+admin@test.com and add them under Users → Add User first.
+
+## Things worth checking
+
+- **Uninvited email:** sign in with e.g. stranger@gmail.com and you should
+  see the "isn't registered" message on the login screen, not the app.
+- **Imported Glofox member:** sign in as glofox@test.com. There's no
+  invitation, but it's allowed, and within a few seconds the 3 credits and
+  phone number from the imported record appear on the new account.
+- **Deactivate / reactivate:** as admin@test.com, open Users, pick a test
+  user and tap Deactivate. That user is signed out (or refused at their next
+  sign-in) with an "inactive" message. Tap Reactivate and they can sign in
+  again with their credits and bookings intact. Use a second browser profile
+  or an incognito window to be signed in as both at once.
 
 Credits are general credits: they work for any class that isn't restricted to
 specific plans.
@@ -66,7 +93,7 @@ error in test mode:
 - card payments (Stripe)
 - the admin Activity Log and Transactions (Google Sheet)
 
-Free-plan redemption, "Send reminder now" and coach photo upload work.
+Free-plan redemption and "Send reminder now" work.
 
 Emails are saved to the emulator's `mail` collection (visible in the dashboard)
 but never sent.
@@ -75,6 +102,18 @@ but never sent.
 
 Stop the emulators (Ctrl+C in terminal 1). All test data is discarded. Start
 again and re-run the seed script for a clean copy.
+
+To reset without restarting, wipe the emulator and re-seed:
+
+```
+curl -X DELETE "http://127.0.0.1:8080/emulator/v1/projects/fitness-booking-app-23bdc/databases/(default)/documents"
+curl -X DELETE "http://127.0.0.1:9099/emulator/v1/projects/fitness-booking-app-23bdc/accounts"
+node tool/emulator_seed.js
+```
+
+If the emulators won't start with "port taken", an earlier emulator is still
+running in the background: `netstat -ano | findstr :8080` shows its process
+id, then `taskkill /PID <id> /F`.
 
 ## How it's wired
 

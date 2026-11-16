@@ -195,7 +195,15 @@ class _AuthGate extends StatelessWidget {
             if (userSnap.connectionState == ConnectionState.waiting) {
               return const _Splash();
             }
-            return ShopWebShell(userModel: userSnap.data);
+            final user = userSnap.data;
+            // Deactivated by an admin while signed in — sign out (keeping
+            // the account for reactivation); LoginScreen explains why.
+            if (user != null && !user.isActive) {
+              WidgetsBinding.instance.addPostFrameCallback(
+                  (_) => UserService.signOutDeactivated(user.email));
+              return const _Splash();
+            }
+            return ShopWebShell(userModel: user);
           },
         );
       },

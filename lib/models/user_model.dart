@@ -151,6 +151,12 @@ class UserModel {
   final String? coachPhotoUrl;
   final String? coachBio;
 
+  /// false once an admin deactivates the account (User Management). The
+  /// doc and all history stay; firestore.rules treat the person as a
+  /// non-member and sign-in is refused until an admin reactivates them.
+  /// Missing field = active (every account before this flag existed).
+  final bool isActive;
+
   UserModel({
     required this.uid,
     required this.email,
@@ -165,6 +171,7 @@ class UserModel {
     this.adminCreditGrant,
     this.coachPhotoUrl,
     this.coachBio,
+    this.isActive = true,
   });
 
   bool get isClient => role == 'client';
@@ -241,6 +248,7 @@ class UserModel {
           rawGrant != null ? AdminCreditGrant.fromMap(rawGrant) : null,
       coachPhotoUrl: data['coachPhotoUrl'] as String?,
       coachBio: data['coachBio'] as String?,
+      isActive: data['isActive'] != false,
     );
   }
 
@@ -256,5 +264,6 @@ class UserModel {
         'memberships': memberships.map((m) => m.toMap()).toList(),
         if (adminCreditGrant != null)
           'adminCreditGrant': adminCreditGrant!.toMap(),
+        if (!isActive) 'isActive': false,
       };
 }

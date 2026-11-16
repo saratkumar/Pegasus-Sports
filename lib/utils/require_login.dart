@@ -59,6 +59,10 @@ class _SignInSheetState extends State<_SignInSheet> {
           await FirebaseAuth.instance.signInWithPopup(GoogleAuthProvider());
       await UserService.upsertFromCredential(result);
       if (mounted) Navigator.pop(context, true);
+    } on NotInvitedException {
+      // Already signed out by UserService; the shop's auth gate falls back
+      // to LoginScreen, which shows the "not registered" banner.
+      if (mounted) Navigator.pop(context, false);
     } catch (e, st) {
       if (mounted) {
         reportError(

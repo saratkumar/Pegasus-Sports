@@ -60,7 +60,9 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                         d.data() as Map<String, dynamic>, d.id))
                     .toList();
 
-                if (_roleFilter != 'all') {
+                if (_roleFilter == 'inactive') {
+                  users = users.where((u) => !u.isActive).toList();
+                } else if (_roleFilter != 'all') {
                   users =
                       users.where((u) => u.role == _roleFilter).toList();
                 }
@@ -169,7 +171,7 @@ class _Filters extends StatelessWidget {
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: Row(
-              children: ['all', 'client', 'trainer', 'admin']
+              children: ['all', 'client', 'trainer', 'admin', 'inactive']
                   .map((r) => Padding(
                         padding: const EdgeInsets.only(right: 8),
                         child: ChoiceChip(
@@ -281,6 +283,8 @@ class _UserCard extends StatelessWidget {
                                       ? 'Super Admin'
                                       : 'Admin',
                                   AppColors.error),
+                            if (!user.isActive)
+                              _pill('Inactive', AppColors.textMuted),
                           ],
                         ),
                       ],
@@ -597,8 +601,9 @@ class _UserEditSheetState extends State<_UserEditSheet> {
       builder: (ctx) => AlertDialog(
         title: const Text('Deactivate User?'),
         content: Text(
-            'This will block ${widget.user.name} from logging in. '
-            'Their data is preserved.'),
+            'This will sign ${widget.user.name} out and block them from '
+            'logging in. Their plans, credits, bookings and history are kept, '
+            'and you can reactivate them at any time.'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
@@ -613,14 +618,20 @@ class _UserEditSheetState extends State<_UserEditSheet> {
       ),
     );
     if (ok == true) {
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.user.uid)
-          .update({'isActive': false});
+      await UserService.setActive(widget.user.uid, false);
       if (mounted) {
         Navigator.pop(context);
         AppToast.success(context, '${widget.user.name} deactivated');
       }
+    }
+  }
+
+  Future<void> _reactivate() async {
+    await UserService.setActive(widget.user.uid, true);
+    if (mounted) {
+      Navigator.pop(context);
+      AppToast.success(context,
+          '${widget.user.name} reactivated — they can sign in again');
     }
   }
 
@@ -659,14 +670,24 @@ class _UserEditSheetState extends State<_UserEditSheet> {
                     ],
                   ),
                 ),
-                TextButton.icon(
-                  onPressed: _deactivate,
-                  icon: const Icon(Icons.block,
-                      size: 16, color: AppColors.error),
-                  label: const Text('Deactivate',
-                      style: TextStyle(
-                          color: AppColors.error, fontSize: 12)),
-                ),
+                if (widget.user.isActive)
+                  TextButton.icon(
+                    onPressed: _deactivate,
+                    icon: const Icon(Icons.block,
+                        size: 16, color: AppColors.error),
+                    label: const Text('Deactivate',
+                        style: TextStyle(
+                            color: AppColors.error, fontSize: 12)),
+                  )
+                else
+                  TextButton.icon(
+                    onPressed: _reactivate,
+                    icon: const Icon(Icons.check_circle_outline,
+                        size: 16, color: AppColors.success),
+                    label: const Text('Reactivate',
+                        style: TextStyle(
+                            color: AppColors.success, fontSize: 12)),
+                  ),
               ],
             ),
             const Divider(height: 28),

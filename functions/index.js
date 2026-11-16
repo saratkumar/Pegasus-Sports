@@ -107,6 +107,22 @@ function ageOn(dob, on) {
   return age;
 }
 
+// Sign-up is invite-only (firestore.rules users/{uid} create): a signed-in
+// account without a users/{uid} profile is a stranger or an anonymous web
+// shop session, so refuse BEFORE charging — otherwise Stripe takes the money
+// and the later membership grant (a tx.update on that missing doc) fails.
+async function assertMember(uid) {
+  const snap = await admin.firestore().collection("users").doc(uid).get();
+  if (!snap.exists) {
+    throw new HttpsError("permission-denied",
+      "This account isn't registered with PSAS. Please contact the gym to get access.");
+  }
+  if (snap.get("isActive") === false) {
+    throw new HttpsError("permission-denied",
+      "This account is inactive. Please contact the gym to reactivate your membership.");
+  }
+}
+
 async function assertJuniorEligible(uid, planName) {
   const db = admin.firestore();
   const plans = await db.collection("membershipPlans")
@@ -237,6 +253,7 @@ function preparePayment(request) {
 
 exports.createPaymentIntent = onCall({ secrets: ["STRIPE_SECRET_KEY", "STRIPE_PUBLISHABLE_KEY"] }, async (request) => {
   const { netAmount, currency, planName, feeAmount, grossAmount, metadata } = preparePayment(request);
+  await assertMember(request.auth.uid);
   await assertJuniorEligible(request.auth.uid, planName);
 
   const publishableKey = process.env.STRIPE_PUBLISHABLE_KEY;
@@ -273,6 +290,7 @@ const CHECKOUT_RETURN_PAGE = "https://psas-shop.web.app/checkout-complete.html";
 
 exports.createCheckoutSession = onCall({ secrets: ["STRIPE_SECRET_KEY"] }, async (request) => {
   const { netAmount, currency, planName, feeAmount, grossAmount, metadata } = preparePayment(request);
+  await assertMember(request.auth.uid);
   await assertJuniorEligible(request.auth.uid, planName);
 
   const stripe = getStripe();
@@ -478,6 +496,7 @@ exports.redeemFreeMembership = onCall(async (request) => {
   if (!planName || credits == null || validityDays == null || !couponCode) {
     throw new HttpsError("invalid-argument", "Missing required fields.");
   }
+  await assertMember(request.auth.uid);
   await assertJuniorEligible(request.auth.uid, planName);
 
   const db = admin.firestore();
@@ -614,7 +633,7 @@ exports.onUserCreated = onDocumentCreated("users/{uid}", async (event) => {
 
 async function callerIsAdmin(uid) {
   const doc = await admin.firestore().collection("users").doc(uid).get();
-  return doc.data()?.role === "admin";
+  return doc.data()?.role === "admin" && doc.data()?.isActive !== false;
 }
 
 exports.callAppsScript = onCall({ secrets: ["APPS_SCRIPT_URL"] }, async (request) => {

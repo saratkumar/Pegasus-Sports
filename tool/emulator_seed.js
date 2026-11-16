@@ -30,6 +30,12 @@ const TEST_ACCOUNTS = [
   { email: 'admin@test.com', name: 'Test Admin', role: 'admin', adminLevel: 'super_admin', initialCredits: 0 },
 ];
 
+// A member "imported from Glofox": a users doc with no sign-in account yet
+// (importedPending). Signing in with this email must be allowed even though
+// there's no invitation, and onUserCreated moves these credits onto the new
+// account. Any email not listed here or in TEST_ACCOUNTS must be refused.
+const IMPORTED_MEMBER = { id: 'glofox-import-1', email: 'glofox@test.com', name: 'Imported Glofox Member', phone: '91234567', credits: 3 };
+
 // The Firebase CLI's public OAuth client, read from the installed
 // firebase-tools rather than copied here.
 function cliOAuthClient() {
@@ -126,10 +132,26 @@ const str = (s) => ({ stringValue: s });
       initialCredits: { integerValue: String(a.initialCredits) },
     });
   }
+
+  const m = IMPORTED_MEMBER;
+  await writeEmulator('users', m.id, {
+    email: str(m.email),
+    name: str(m.name),
+    phone: str(m.phone),
+    role: str('client'),
+    credits: { integerValue: String(m.credits) },
+    memberships: { arrayValue: {} },
+    adminPermissions: { arrayValue: {} },
+    importedPending: { booleanValue: true },
+    importSource: str('glofox'),
+  });
+
   console.log('\nTest accounts — in the emulator sign-in pop-up choose "Add new account" and use:');
   for (const a of TEST_ACCOUNTS) {
     console.log(`  ${a.email.padEnd(18)} ${a.role.padEnd(8)} ${a.initialCredits} credits`);
   }
+  console.log(`  ${m.email.padEnd(18)} ${'client'.padEnd(8)} ${m.credits} credits (imported from Glofox, no invitation)`);
+  console.log(`  any other email    refused ("isn't registered with PSAS")`);
   console.log('\nDone. Production was only read; everything was written to the local emulator.');
 })().catch((e) => {
   console.error(e.message);

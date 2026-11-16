@@ -129,7 +129,7 @@ class _AuthGate extends StatelessWidget {
               return const _Splash();
             }
             final user = userSnap.data;
-            if (user == null || !user.isAdmin) {
+            if (user == null || !user.isAdmin || !user.isActive) {
               return const _NotAuthorizedScreen();
             }
             return const AdminWebShell();

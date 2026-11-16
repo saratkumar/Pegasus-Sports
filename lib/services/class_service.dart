@@ -149,6 +149,7 @@ class ClassService {
         .get();
     return snap.docs
         .map((d) => UserModel.fromFirestore(d.data(), d.id))
+        .where((u) => u.isActive)
         .toList()
       ..sort((a, b) => a.name.compareTo(b.name));
   }

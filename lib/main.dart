@@ -258,6 +258,13 @@ class _FitnessBookingAppState extends State<FitnessBookingApp> {
                 return const _Splash();
               }
               final user = userSnap.data;
+              // Deactivated by an admin while signed in — sign out (keeping
+              // the account for reactivation); LoginScreen explains why.
+              if (user != null && !user.isActive) {
+                WidgetsBinding.instance.addPostFrameCallback(
+                    (_) => UserService.signOutDeactivated(user.email));
+                return const _Splash();
+              }
               return BottomNav(userModel: user);
             },
           );

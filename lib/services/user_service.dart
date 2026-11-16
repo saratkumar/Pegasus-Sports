@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import '../models/user_model.dart';
 import '../utils/drive_image.dart';
 
@@ -16,8 +18,32 @@ class ReminderResult {
   ReminderResult({required this.planName, required this.sent, this.reason});
 }
 
+/// Thrown by [UserService.upsertFromCredential] when the signed-in email is
+/// neither invited nor an imported Glofox member, or belongs to a
+/// deactivated account. By the time it's thrown the user is signed out.
+class NotInvitedException implements Exception {
+  final String email;
+  final bool deactivated;
+  NotInvitedException(this.email, {this.deactivated = false});
+  @override
+  String toString() => 'NotInvitedException($email, deactivated: $deactivated)';
+}
+
+/// Why the last sign-in was refused — see [UserService.accessDenied].
+class AccessDenial {
+  final String email;
+  final bool deactivated;
+  const AccessDenial(this.email, {this.deactivated = false});
+}
+
 class UserService {
   static final _db = FirebaseFirestore.instance;
+
+  /// Set to the rejected email when an uninvited person tries to sign in.
+  /// Lives here rather than in LoginScreen's state because the rejection
+  /// lands after the auth gate has already swapped LoginScreen out — the
+  /// freshly-mounted LoginScreen reads this to explain what happened.
+  static final accessDenied = ValueNotifier<AccessDenial?>(null);
   // Cloud Functions are deployed to asia-southeast1 (see functions/index.js
   // setGlobalOptions) — the default FirebaseFunctions.instance targets
   // us-central1 and would silently fail to find the function.
@@ -65,15 +91,44 @@ class UserService {
     final existing = await userRef.get();
 
     if (!existing.exists) {
-      // Check for an admin-created invitation for this email — role
-      // (including 'admin'/adminLevel) comes entirely from Firestore data,
-      // never from a hardcoded email list.
-      final invite = await consumeInvitation(email);
+      // Sign-up is invite-only: a first sign-in must match either an
+      // admin-created invitation or a member imported from Glofox
+      // (importedPending, handed over by the onUserCreated function).
+      // firestore.rules enforces the same check on the users/{uid} create,
+      // so this is the friendly path, not the only gate.
+      final emailKey = email.toLowerCase().trim();
+      final inviteRef = _db.collection('invitations').doc(emailKey);
+      final invite = emailKey.isEmpty ? null : (await inviteRef.get()).data();
 
+      String? importedFrom;
+      if (invite == null && emailKey.isNotEmpty) {
+        final matches = await _db
+            .collection('users')
+            .where('email', isEqualTo: emailKey)
+            .get();
+        for (final d in matches.docs) {
+          if (d.id != uid && d.data()['importedPending'] == true) {
+            importedFrom = d.id;
+            break;
+          }
+        }
+      }
+
+      if (invite == null && importedFrom == null) {
+        await _rejectUninvited(result.user!);
+        throw NotInvitedException(email);
+      }
+
+      // Role (including 'admin'/adminLevel) comes entirely from the
+      // invitation, never from a hardcoded email list.
       final role = invite?['role'] as String? ?? 'client';
       final adminLevel = invite?['adminLevel'] as String?;
 
-      await userRef.set({
+      // One batch so the invitation is consumed only if the profile is
+      // created — and so the rules' exists() check on the invitation sees it
+      // (rules evaluate exists() against the pre-batch state).
+      final batch = _db.batch();
+      batch.set(userRef, {
         'email': email,
         'name': (invite?['name'] as String?)?.isNotEmpty == true
             ? invite!['name']
@@ -86,7 +141,16 @@ class UserService {
         'adminPermissions': <String>[],
         'credits': invite?['initialCredits'] as int? ?? 0,
         'memberships': <Map<String, dynamic>>[],
+        if (importedFrom != null) 'importedFrom': importedFrom,
       });
+      if (invite != null) batch.delete(inviteRef);
+      await batch.commit();
+    } else if (existing.data()?['isActive'] == false) {
+      // Deactivated by an admin. Sign out but keep the Auth account: its uid
+      // is what links their bookings/plans/history, so reactivating them
+      // later gives back the same account with everything intact.
+      await signOutDeactivated(email);
+      throw NotInvitedException(email, deactivated: true);
     } else {
       // Update mutable profile fields only; role/adminLevel/credits are
       // preserved as-is — Firestore is the sole source of truth for them.
@@ -192,16 +256,43 @@ class UserService {
     });
   }
 
-  /// Reads and deletes the invitation for this email (one-time use).
-  static Future<Map<String, dynamic>?> consumeInvitation(String email) async {
-    final doc = await _db
-        .collection('invitations')
-        .doc(email.toLowerCase().trim())
-        .get();
-    if (!doc.exists) return null;
-    final data = Map<String, dynamic>.from(doc.data()!);
-    await doc.reference.delete();
-    return data;
+  /// Undoes an uninvited sign-in: deletes the Auth account Firebase just
+  /// created (so strangers don't pile up in Authentication) and signs out,
+  /// leaving [accessDenied] set for LoginScreen to explain.
+  static Future<void> _rejectUninvited(User user) async {
+    accessDenied.value = AccessDenial(user.email ?? '');
+    try {
+      await user.delete();
+    } catch (_) {
+      // Already-existing Auth account (e.g. a member whose profile an admin
+      // removed) or a transient failure — signing out is enough.
+    }
+    await _signOutEverywhere();
+  }
+
+  /// Signs out a deactivated account WITHOUT deleting it (the uid must
+  /// survive for reactivation). Also called by the app's auth gates when an
+  /// admin deactivates someone who is already signed in.
+  static Future<void> signOutDeactivated(String email) async {
+    accessDenied.value = AccessDenial(email, deactivated: true);
+    await _signOutEverywhere();
+  }
+
+  /// Admin action from User Management. Nothing is deleted either way.
+  static Future<void> setActive(String uid, bool active) => _db
+      .collection('users')
+      .doc(uid)
+      .update({'isActive': active});
+
+  static Future<void> _signOutEverywhere() async {
+    await FirebaseAuth.instance.signOut();
+    if (!kIsWeb) {
+      // Otherwise the next tap silently reuses the same Google account
+      // instead of showing the account picker.
+      try {
+        await GoogleSignIn().signOut();
+      } catch (_) {}
+    }
   }
 
   /// Deducts one credit for a booking. [allowedPlanNames] is the booked
