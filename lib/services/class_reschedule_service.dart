@@ -28,8 +28,13 @@ class ClassRescheduleService {
   static final _usersCol = _db.collection('users');
 
   static const dayNames = [
-    'Monday', 'Tuesday', 'Wednesday', 'Thursday',
-    'Friday', 'Saturday', 'Sunday',
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+    'Sunday',
   ];
 
   // ── Single session ──────────────────────────────────────────────────────
@@ -112,6 +117,78 @@ class ClassRescheduleService {
         className: cls.mode,
         location: cls.location,
         durationMinutes: minutesBetween(newStart, newEnd)));
+
+    return (bookingsMoved: moves.length, waitlistMoved: waitlist.length);
+  }
+
+  /// Edits ONE session of a repeating [cls] — the one on [date] — leaving
+  /// every other week as it was. That session becomes its own one-off class
+  /// built from [edited] (title, time, capacity, coach, … as the admin set
+  /// them in the form); [date] is taken off the original class's schedule
+  /// and that date's bookings and waiting list move onto the new session.
+  /// Clients are emailed only if the start time changed — a new title or
+  /// capacity isn't a reschedule.
+  static Future<RescheduleResult> editSession({
+    required ClassModel cls,
+    required DateTime date,
+    required ClassModel edited,
+  }) async {
+    final day = _day(date);
+
+    final newRef = _classesCol.doc();
+    await newRef.set({
+      ...edited.toFirestore(),
+      'day': dayNames[day.weekday - 1],
+      'occurrence': 'once',
+      'specificDate': _dateKey(day),
+      'isActive': true,
+      'rescheduledFrom': {
+        'classId': cls.effectiveId,
+        'date': _dateKey(day),
+        'startTime': cls.startTime,
+      },
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+
+    await _classesCol.doc(cls.id).update({
+      'cancelledDates': FieldValue.arrayUnion([_dateKey(day)]),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+
+    final bookings = await _activeBookingsOn(cls.effectiveId, day);
+    final moves = [
+      for (final b in bookings)
+        _Move(b,
+            newClassId: newRef.id, newDate: day, newTime: edited.startTime),
+    ];
+    await _applyMoves(moves);
+    final waitlist = await _waitingOn(cls.effectiveId, day);
+    await _moveWaitlist(waitlist,
+        newClassId: newRef.id, newDate: day, newTime: edited.startTime);
+
+    await _db.collection('sessionLogs').add({
+      'type': 'session_edited',
+      'classId': cls.effectiveId,
+      'newClassId': newRef.id,
+      'className': edited.mode,
+      'date': _dateKey(day),
+      'fromTime': cls.startTime,
+      'toTime': edited.startTime,
+      'bookingsMoved': moves.length,
+      'editedAt': Timestamp.now(),
+    });
+
+    final newTime = parseTimeString(edited.startTime);
+    final minutes = parseDuration(edited.duration) ?? 60;
+    unawaited(_notify(moves,
+        oldClassId: cls.effectiveId,
+        className: edited.mode,
+        location: edited.location,
+        durationMinutes: minutes,
+        // The Activity Log rows always move with the bookings (the Roster is
+        // rebuilt from them); the email only when the time really changed.
+        sendEmail: newTime != null &&
+            edited.startTime.trim() != cls.startTime.trim()));
 
     return (bookingsMoved: moves.length, waitlistMoved: waitlist.length);
   }
@@ -236,7 +313,8 @@ class ClassRescheduleService {
       '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
   static int minutesBetween(TimeOfDay start, TimeOfDay end) {
-    final diff = (end.hour * 60 + end.minute) - (start.hour * 60 + start.minute);
+    final diff =
+        (end.hour * 60 + end.minute) - (start.hour * 60 + start.minute);
     return diff > 0 ? diff : diff + 24 * 60;
   }
 
@@ -286,7 +364,9 @@ class ClassRescheduleService {
     final snap = await _bookingsCol.where('classId', isEqualTo: classId).get();
     return snap.docs.where((d) {
       final bd = d.data()['bookingDate'];
-      return bd is Timestamp && _isActive(d.data()) && !bd.toDate().isBefore(from);
+      return bd is Timestamp &&
+          _isActive(d.data()) &&
+          !bd.toDate().isBefore(from);
     }).toList();
   }
 
@@ -363,6 +443,7 @@ class ClassRescheduleService {
     required String className,
     required String location,
     required int durationMinutes,
+    bool sendEmail = true,
   }) async {
     String fmt(DateTime d) =>
         '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
@@ -411,7 +492,7 @@ class ClassRescheduleService {
           note: 'Rescheduled by admin from ${fmt(m.oldDate)} ${m.oldTime}',
         );
 
-        if (email.isNotEmpty) {
+        if (sendEmail && email.isNotEmpty) {
           await EmailService.sendRescheduleEmail(
             email: email,
             clientName: userName,

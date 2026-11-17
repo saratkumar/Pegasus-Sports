@@ -2,12 +2,30 @@ import 'package:flutter/material.dart';
 import '../../models/class_model.dart';
 import '../../models/membership_plan_model.dart';
 import '../../models/user_model.dart';
+import '../../services/class_reschedule_service.dart';
 import '../../services/class_service.dart';
 import '../../services/membership_plan_service.dart';
 import '../../services/notifications.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
 import '../../utils/error_reporter.dart';
+
+/// Opens the class create/edit form from anywhere (e.g. the Roster).
+/// [existing] edits that class — every session of it, unless [sessionDate]
+/// is given: then only that one date is edited (it becomes its own session;
+/// other weeks stay the same). [onDate] (new classes only) pre-sets a
+/// one-off session on that date; the admin can switch it to weekly.
+/// Returns true if the class was saved.
+Future<bool> openClassForm(BuildContext context,
+    {ClassModel? existing, DateTime? onDate, DateTime? sessionDate}) async {
+  final saved = await Navigator.push<bool>(
+    context,
+    MaterialPageRoute(
+        builder: (_) => _ClassFormScreen(
+            existing: existing, initialDate: onDate, sessionDate: sessionDate)),
+  );
+  return saved == true;
+}
 
 class ClassManagementScreen extends StatelessWidget {
   const ClassManagementScreen({super.key});
@@ -118,23 +136,51 @@ class _ClassCard extends StatelessWidget {
       {required this.cls, required this.onEdit, required this.onDelete});
 
   static const _abbr = {
-    'Monday': 'Mon', 'Tuesday': 'Tue', 'Wednesday': 'Wed',
-    'Thursday': 'Thu', 'Friday': 'Fri', 'Saturday': 'Sat', 'Sunday': 'Sun',
+    'Monday': 'Mon',
+    'Tuesday': 'Tue',
+    'Wednesday': 'Wed',
+    'Thursday': 'Thu',
+    'Friday': 'Fri',
+    'Saturday': 'Sat',
+    'Sunday': 'Sun',
   };
   static const _ordered = [
-    'Monday', 'Tuesday', 'Wednesday', 'Thursday',
-    'Friday', 'Saturday', 'Sunday'
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+    'Sunday'
   ];
 
   static String _formatDay(String day, String occurrence) {
-    if (occurrence == 'daily') { return 'Every day'; }
-    if (occurrence == 'once') { return 'Once'; }
-    if (occurrence == 'monthly') { return 'Monthly'; }
-    final days = day.split(',').map((d) => d.trim()).where((d) => d.isNotEmpty).toSet();
-    if (days.length == 7) { return 'Every day'; }
-    if (days.length == 5 && !days.contains('Saturday') && !days.contains('Sunday')) { return 'Weekdays'; }
-    if (days.length == 2 && days.contains('Saturday') && days.contains('Sunday')) { return 'Weekends'; }
-    final sorted = _ordered.where(days.contains).map((d) => _abbr[d] ?? d).toList();
+    if (occurrence == 'daily') {
+      return 'Every day';
+    }
+    if (occurrence == 'once') {
+      return 'Once';
+    }
+    if (occurrence == 'monthly') {
+      return 'Monthly';
+    }
+    final days =
+        day.split(',').map((d) => d.trim()).where((d) => d.isNotEmpty).toSet();
+    if (days.length == 7) {
+      return 'Every day';
+    }
+    if (days.length == 5 &&
+        !days.contains('Saturday') &&
+        !days.contains('Sunday')) {
+      return 'Weekdays';
+    }
+    if (days.length == 2 &&
+        days.contains('Saturday') &&
+        days.contains('Sunday')) {
+      return 'Weekends';
+    }
+    final sorted =
+        _ordered.where(days.contains).map((d) => _abbr[d] ?? d).toList();
     return sorted.isEmpty ? day : sorted.join(', ');
   }
 
@@ -145,109 +191,111 @@ class _ClassCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: active ? AppColors.card : AppColors.error.withValues(alpha: 0.05),
+        color:
+            active ? AppColors.card : AppColors.error.withValues(alpha: 0.05),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-            color: active ? AppColors.divider : AppColors.error.withValues(alpha: 0.4)),
+            color: active
+                ? AppColors.divider
+                : AppColors.error.withValues(alpha: 0.4)),
       ),
       child: Opacity(
         opacity: active ? 1 : 0.7,
         child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: (active ? AppColors.primary : AppColors.textMuted)
-                  .withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(12),
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: (active ? AppColors.primary : AppColors.textMuted)
+                    .withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(Icons.fitness_center,
+                  color: active ? AppColors.primary : AppColors.textMuted,
+                  size: 22),
             ),
-            child: Icon(Icons.fitness_center,
-                color: active ? AppColors.primary : AppColors.textMuted,
-                size: 22),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(children: [
-                  Expanded(
-                    child: Text(cls.mode,
-                        style: const TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.textPrimary)),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 3),
-                    margin: const EdgeInsets.only(left: 6),
-                    decoration: BoxDecoration(
-                      color: (active
-                              ? const Color(0xFF00D4AA)
-                              : AppColors.error)
-                          .withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(8),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [
+                    Expanded(
+                      child: Text(cls.mode,
+                          style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.textPrimary)),
                     ),
-                    child: Text(active ? 'Active' : 'Inactive',
-                        style: TextStyle(
-                            fontSize: 10,
-                            color: active
-                                ? const Color(0xFF00D4AA)
-                                : AppColors.error,
-                            fontWeight: FontWeight.w700)),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 3),
-                    margin: const EdgeInsets.only(left: 6),
-                    decoration: BoxDecoration(
-                      color: AppColors.primary.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      margin: const EdgeInsets.only(left: 6),
+                      decoration: BoxDecoration(
+                        color:
+                            (active ? const Color(0xFF00D4AA) : AppColors.error)
+                                .withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(active ? 'Active' : 'Inactive',
+                          style: TextStyle(
+                              fontSize: 10,
+                              color: active
+                                  ? const Color(0xFF00D4AA)
+                                  : AppColors.error,
+                              fontWeight: FontWeight.w700)),
                     ),
-                    child: Text(cls.type,
-                        style: const TextStyle(
-                            fontSize: 10,
-                            color: AppColors.primary,
-                            fontWeight: FontWeight.w600)),
-                  ),
-                ]),
-                const SizedBox(height: 4),
-                Text(
-                    '${_formatDay(cls.day, cls.occurrence)} · ${cls.startTime} · ${cls.duration} · Cap: ${cls.groupSize}',
-                    style: const TextStyle(
-                        fontSize: 12, color: AppColors.textSecondary)),
-                Text('${cls.location} · ${cls.coach}',
-                    style: const TextStyle(
-                        fontSize: 12, color: AppColors.textMuted)),
-                if (cls.description.isNotEmpty) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      margin: const EdgeInsets.only(left: 6),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(cls.type,
+                          style: const TextStyle(
+                              fontSize: 10,
+                              color: AppColors.primary,
+                              fontWeight: FontWeight.w600)),
+                    ),
+                  ]),
                   const SizedBox(height: 4),
-                  Text(cls.description,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+                  Text(
+                      '${_formatDay(cls.day, cls.occurrence)} · ${cls.startTime} · ${cls.duration} · Cap: ${cls.groupSize}',
                       style: const TextStyle(
                           fontSize: 12, color: AppColors.textSecondary)),
+                  Text('${cls.location} · ${cls.coach}',
+                      style: const TextStyle(
+                          fontSize: 12, color: AppColors.textMuted)),
+                  if (cls.description.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(cls.description,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 12, color: AppColors.textSecondary)),
+                  ],
                 ],
-              ],
+              ),
             ),
-          ),
-          Column(children: [
-            IconButton(
-              icon: const Icon(Icons.edit_outlined,
-                  color: AppColors.primary, size: 20),
-              onPressed: onEdit,
-              tooltip: 'Edit',
-            ),
-            IconButton(
-              icon: const Icon(Icons.delete_outline,
-                  color: AppColors.error, size: 20),
-              onPressed: onDelete,
-              tooltip: 'Delete',
-            ),
-          ]),
-        ],
+            Column(children: [
+              IconButton(
+                icon: const Icon(Icons.edit_outlined,
+                    color: AppColors.primary, size: 20),
+                onPressed: onEdit,
+                tooltip: 'Edit',
+              ),
+              IconButton(
+                icon: const Icon(Icons.delete_outline,
+                    color: AppColors.error, size: 20),
+                onPressed: onDelete,
+                tooltip: 'Delete',
+              ),
+            ]),
+          ],
         ),
       ),
     );
@@ -258,7 +306,13 @@ class _ClassCard extends StatelessWidget {
 
 class _ClassFormScreen extends StatefulWidget {
   final ClassModel? existing;
-  const _ClassFormScreen({this.existing});
+
+  /// New class only: start as a one-off session on this date.
+  final DateTime? initialDate;
+
+  /// Edit only this date of [existing] (a repeating class).
+  final DateTime? sessionDate;
+  const _ClassFormScreen({this.existing, this.initialDate, this.sessionDate});
 
   @override
   State<_ClassFormScreen> createState() => _ClassFormScreenState();
@@ -286,6 +340,11 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
   // details, its own duration), so every session books, fills and cancels
   // independently.
   final List<({TimeOfDay start, TimeOfDay end})> _extraSlots = [];
+  // New weekly classes only: "Different times on different days" — each
+  // selected day gets its own list of sessions (e.g. Monday 1–2pm and
+  // 2–3pm, Tuesday 5–6pm and 9–10pm) instead of one shared set of times.
+  bool _perDayTimes = false;
+  final Map<String, List<({TimeOfDay start, TimeOfDay end})>> _daySlots = {};
   bool _isActive = true;
   bool _saving = false;
   bool _loadingData = true;
@@ -298,8 +357,13 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
   late Set<String> _selectedPlanNames;
 
   static const _weekdayOrder = [
-    'Monday', 'Tuesday', 'Wednesday', 'Thursday',
-    'Friday', 'Saturday', 'Sunday',
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+    'Sunday',
   ];
 
   @override
@@ -325,6 +389,20 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
           .toSet();
       _selectedDays = parsed.isEmpty ? {'Monday'} : parsed;
     }
+    final sd = widget.sessionDate;
+    if (e != null && sd != null) {
+      // This date's own capacity (a per-session override may apply).
+      final cap = e.effectiveCapacity(sd);
+      if (cap > 0) _groupSize.text = cap.toString();
+    }
+    final onDate = widget.initialDate;
+    if (e == null && onDate != null) {
+      // "Add session" from the Roster: a one-off on that day by default;
+      // the day is also ticked in case the admin switches to Weekly.
+      _occurrence = 'once';
+      _specificDate = DateTime(onDate.year, onDate.month, onDate.day);
+      _selectedDays = {_weekdayOrder[onDate.weekday - 1]};
+    }
     if (e?.specificDate != null) {
       final parts = e!.specificDate!.split('-');
       if (parts.length == 3) {
@@ -333,7 +411,8 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
       }
     }
     _startTimeOfDay = e != null ? _parseTimeOfDay(e.startTime) : null;
-    final durationMinutes = e != null ? _parseDurationMinutes(e.duration) : null;
+    final durationMinutes =
+        e != null ? _parseDurationMinutes(e.duration) : null;
     if (_startTimeOfDay != null && durationMinutes != null) {
       _endTimeOfDay = _addMinutes(_startTimeOfDay!, durationMinutes);
     }
@@ -398,7 +477,8 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
 
   /// Minutes from [start] to [end], wrapping past midnight.
   static int _minutesBetween(TimeOfDay start, TimeOfDay end) {
-    final diff = (end.hour * 60 + end.minute) - (start.hour * 60 + start.minute);
+    final diff =
+        (end.hour * 60 + end.minute) - (start.hour * 60 + start.minute);
     return diff > 0 ? diff : diff + 24 * 60;
   }
 
@@ -434,19 +514,103 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
     });
   }
 
+  /// Editing just one date of a repeating class (from the Roster).
+  bool get _sessionOnly =>
+      widget.existing != null &&
+      widget.sessionDate != null &&
+      widget.existing!.occurrence != 'once';
+
+  static String _fmtSessionDate(DateTime d) {
+    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
+    ];
+    return '${days[d.weekday - 1]} ${d.day} ${months[d.month - 1]}';
+  }
+
+  /// Whether the form is in "different times on different days" mode.
+  bool get _perDayMode =>
+      widget.existing == null && _occurrence == 'weekly' && _perDayTimes;
+
+  List<String> get _orderedSelectedDays =>
+      _weekdayOrder.where(_selectedDays.contains).toList();
+
+  /// Turning per-day times on starts each selected day with whatever times
+  /// were already entered, so nothing has to be typed twice.
+  void _setPerDayTimes(bool on) {
+    setState(() {
+      _perDayTimes = on;
+      if (!on) return;
+      final shared = <({TimeOfDay start, TimeOfDay end})>[
+        if (_startTimeOfDay != null && _endTimeOfDay != null)
+          (start: _startTimeOfDay!, end: _endTimeOfDay!),
+        ..._extraSlots,
+      ];
+      for (final day in _orderedSelectedDays) {
+        _daySlots.putIfAbsent(day, () => List.of(shared));
+      }
+    });
+  }
+
+  /// Picks a start then an end time for one more session on [day].
+  Future<void> _addDaySlot(String day) async {
+    final slots = _daySlots.putIfAbsent(day, () => []);
+    final start = await showTimePicker(
+      context: context,
+      helpText: '$day — START TIME'.toUpperCase(),
+      initialTime: slots.isNotEmpty
+          ? slots.last.end
+          : const TimeOfDay(hour: 9, minute: 0),
+    );
+    if (start == null || !mounted) return;
+    if (slots.any((s) => s.start == start)) {
+      AppToast.warning(
+          context, '$day already has a session at ${_formatTimeOfDay(start)}');
+      return;
+    }
+    final end = await showTimePicker(
+      context: context,
+      helpText: '$day — END TIME'.toUpperCase(),
+      initialTime: _addMinutes(start, 60),
+    );
+    if (end == null || !mounted) return;
+    if (end == start) {
+      AppToast.warning(context, 'End time must be different from start time');
+      return;
+    }
+    setState(() {
+      slots
+        ..add((start: start, end: end))
+        ..sort((a, b) => _toMinutes(a.start).compareTo(_toMinutes(b.start)));
+    });
+  }
+
   /// Picks a start time, then an end time, for one more session.
   Future<void> _addExtraSlot() async {
-    final lastEnd = _extraSlots.isNotEmpty ? _extraSlots.last.end : _endTimeOfDay;
+    final lastEnd =
+        _extraSlots.isNotEmpty ? _extraSlots.last.end : _endTimeOfDay;
     final start = await showTimePicker(
       context: context,
       helpText: 'START TIME',
       initialTime: lastEnd ?? const TimeOfDay(hour: 9, minute: 0),
     );
     if (start == null || !mounted) return;
-    final isDuplicate = start == _startTimeOfDay ||
-        _extraSlots.any((s) => s.start == start);
+    final isDuplicate =
+        start == _startTimeOfDay || _extraSlots.any((s) => s.start == start);
     if (isDuplicate) {
-      AppToast.warning(context, 'A session at ${_formatTimeOfDay(start)} is already added');
+      AppToast.warning(
+          context, 'A session at ${_formatTimeOfDay(start)} is already added');
       return;
     }
     final end = await showTimePicker(
@@ -492,9 +656,8 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
           types.any((t) => t['name'] == existingType)) {
         initialType = existingType;
       } else {
-        initialType = types.isNotEmpty
-            ? (types.first['name']?.toString() ?? '')
-            : '';
+        initialType =
+            types.isNotEmpty ? (types.first['name']?.toString() ?? '') : '';
       }
 
       setState(() {
@@ -529,7 +692,21 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
       AppToast.error(context, 'Please select a coach');
       return;
     }
-    if (_startTimeOfDay == null || _endTimeOfDay == null) {
+    final perDay = _perDayMode;
+    if (perDay) {
+      final days = _orderedSelectedDays;
+      if (days.isEmpty) {
+        AppToast.error(context, 'Select at least one day');
+        return;
+      }
+      final missing =
+          days.where((d) => (_daySlots[d] ?? const []).isEmpty).toList();
+      if (missing.isNotEmpty) {
+        AppToast.error(
+            context, 'Add at least one time for ${missing.join(', ')}');
+        return;
+      }
+    } else if (_startTimeOfDay == null || _endTimeOfDay == null) {
       AppToast.error(context, 'Please pick a start and end time');
       return;
     }
@@ -553,16 +730,14 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
 
     // Resolve location from facility or manual field
     final fac = _selectedFacilityId != null
-        ? _facilities.firstWhere(
-            (f) => f['id'] == _selectedFacilityId,
+        ? _facilities.firstWhere((f) => f['id'] == _selectedFacilityId,
             orElse: () => {})
         : {};
     final locationLabel = fac.isNotEmpty
         ? (fac['name']?.toString() ?? _location.text.trim())
         : _location.text.trim();
-    final detailLabel = fac.isNotEmpty
-        ? (fac['address']?.toString() ?? '')
-        : '';
+    final detailLabel =
+        fac.isNotEmpty ? (fac['address']?.toString() ?? '') : '';
 
     final specificDateStr = _specificDate != null
         ? '${_specificDate!.year}-'
@@ -570,9 +745,10 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
             '${_specificDate!.day.toString().padLeft(2, '0')}'
         : null;
 
-    ClassModel buildClass(String startTime, String duration) => ClassModel(
+    ClassModel buildClass(String startTime, String duration, {String? day}) =>
+        ClassModel(
           id: widget.existing?.id,
-          day: dayValue,
+          day: day ?? dayValue,
           mode: _mode.text.trim(),
           coach: coachName,
           location: locationLabel,
@@ -589,20 +765,59 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
           specificDate: specificDateStr,
           allowedPlanNames: _selectedPlanNames.toList(),
         );
-    final cls = buildClass(_startTime.text.trim(), _duration.text.trim());
+    // Per-day mode: one class per distinct session time, on every day that
+    // has that exact time (e.g. 1–2pm on Monday and Tuesday is one class
+    // running both days), so each session still books and fills on its own.
+    final perDayClasses = <ClassModel>[];
+    if (perDay) {
+      final byTime =
+          <String, ({TimeOfDay start, TimeOfDay end, List<String> days})>{};
+      for (final day in _orderedSelectedDays) {
+        for (final slot in _daySlots[day]!) {
+          final key = '${_toMinutes(slot.start)}-${_toMinutes(slot.end)}';
+          byTime.putIfAbsent(
+              key, () => (start: slot.start, end: slot.end, days: <String>[]));
+          byTime[key]!.days.add(day);
+        }
+      }
+      final groups = byTime.values.toList()
+        ..sort((a, b) => _toMinutes(a.start).compareTo(_toMinutes(b.start)));
+      for (final g in groups) {
+        perDayClasses.add(buildClass(
+          _formatTimeOfDay(g.start),
+          _formatDurationMinutes(_minutesBetween(g.start, g.end)),
+          day: g.days.join(','),
+        ));
+      }
+    }
+    final cls = perDay
+        ? perDayClasses.first
+        : buildClass(_startTime.text.trim(), _duration.text.trim());
 
     try {
       final isEdit = widget.existing?.id != null;
       final oldCoach = widget.existing?.coach ?? '';
-      final coachChanged = isEdit && oldCoach != coachName && oldCoach.isNotEmpty;
+      final coachChanged =
+          isEdit && oldCoach != coachName && oldCoach.isNotEmpty;
 
-      if (isEdit) {
+      if (_sessionOnly) {
+        await ClassRescheduleService.editSession(
+          cls: widget.existing!,
+          date: widget.sessionDate!,
+          edited: cls,
+        );
+      } else if (isEdit) {
         await ClassService.updateClass(widget.existing!.id!, cls);
         if (coachChanged) {
           await Future.wait([
             NotificationService.showTrainerRemoved(cls.mode),
-            NotificationService.showTrainerAssigned(cls.mode, 'all upcoming sessions'),
+            NotificationService.showTrainerAssigned(
+                cls.mode, 'all upcoming sessions'),
           ]);
+        }
+      } else if (perDay) {
+        for (final c in perDayClasses) {
+          await ClassService.createClass(c);
         }
       } else {
         await ClassService.createClass(cls);
@@ -614,15 +829,17 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
         }
       }
       if (mounted) {
-        final created = 1 + _extraSlots.length;
-        Navigator.pop(context);
+        final created = perDay ? perDayClasses.length : 1 + _extraSlots.length;
+        Navigator.pop(context, true);
         AppToast.success(
             context,
-            widget.existing != null
-                ? 'Class updated'
-                : created == 1
-                    ? 'Class created'
-                    : '$created classes created (one per time slot)');
+            _sessionOnly
+                ? 'Updated ${_fmtSessionDate(widget.sessionDate!)} only'
+                : widget.existing != null
+                    ? 'Class updated'
+                    : created == 1
+                        ? 'Class created'
+                        : '$created classes created (one per time slot)');
       }
     } catch (err, st) {
       setState(() => _saving = false);
@@ -655,6 +872,60 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
                 padding: EdgeInsets.fromLTRB(
                     16, 16, 16, 16 + MediaQuery.of(context).padding.bottom),
                 children: [
+                  if (_sessionOnly) ...[
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppColors.warning.withValues(alpha: 0.10),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(Icons.event_note,
+                              size: 18, color: AppColors.warning),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Editing only ${_fmtSessionDate(widget.sessionDate!)}. '
+                              'Every other week of this class stays the same. '
+                              "This session's bookings stay with it.",
+                              style: const TextStyle(
+                                  fontSize: 12, color: AppColors.textSecondary),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ] else if (widget.existing != null &&
+                      widget.existing!.occurrence != 'once') ...[
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.info_outline,
+                              size: 18, color: AppColors.primary),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Changes here apply to every session of this '
+                              'class. To change only one date, use '
+                              'Reschedule / Cancel in the Roster.',
+                              style: TextStyle(
+                                  fontSize: 12, color: AppColors.textSecondary),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
                   _field(_mode, 'Class Name', required: true),
                   const SizedBox(height: 12),
                   _field(_description, 'Description', maxLines: 3),
@@ -673,19 +944,32 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
                       _field(_location, 'Location (optional)'),
                       const SizedBox(height: 12),
                     ]),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
+                  if (_perDayMode)
+                    const Row(children: [
+                      Icon(Icons.info_outline,
+                          size: 14, color: AppColors.textMuted),
+                      SizedBox(width: 6),
                       Expanded(
-                          child: _timeField(
-                              'Start Time', _startTimeOfDay, _pickStartTime)),
-                      const SizedBox(width: 12),
-                      Expanded(
-                          child: _timeField(
-                              'End Time', _endTimeOfDay, _pickEndTime)),
-                    ],
-                  ),
-                  if (_durationMinutes != null) ...[
+                        child: Text(
+                            'Times are set per day — see the days below.',
+                            style: TextStyle(
+                                fontSize: 12, color: AppColors.textMuted)),
+                      ),
+                    ])
+                  else
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                            child: _timeField(
+                                'Start Time', _startTimeOfDay, _pickStartTime)),
+                        const SizedBox(width: 12),
+                        Expanded(
+                            child: _timeField(
+                                'End Time', _endTimeOfDay, _pickEndTime)),
+                      ],
+                    ),
+                  if (!_perDayMode && _durationMinutes != null) ...[
                     const SizedBox(height: 8),
                     Row(children: [
                       const Icon(Icons.schedule,
@@ -697,46 +981,79 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
                               fontSize: 12, color: AppColors.textMuted)),
                     ]),
                   ],
-                  if (widget.existing == null) ...[
+                  if (widget.existing == null && !_perDayMode) ...[
                     const SizedBox(height: 8),
                     _extraSlotsSection(),
                   ],
                   const SizedBox(height: 12),
                   _field(_groupSize, 'Capacity',
-                      required: true,
-                      keyboardType: TextInputType.number),
+                      required: true, keyboardType: TextInputType.number),
                   const SizedBox(height: 16),
-                  const Text('Occurrence',
-                      style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.textSecondary)),
-                  const SizedBox(height: 8),
-                  _OccurrencePicker(
-                    value: _occurrence,
-                    onChanged: (v) => setState(() {
-                      _occurrence = v;
-                      if (v != 'once' && v != 'monthly') _specificDate = null;
-                    }),
-                  ),
-                  const SizedBox(height: 12),
-                  if (_occurrence == 'weekly')
-                    _WeekDayPicker(
-                      selected: _selectedDays,
-                      onChanged: (days) =>
-                          setState(() => _selectedDays = days),
-                    )
-                  else if (_occurrence == 'daily')
-                    const Row(children: [
-                      Icon(Icons.info_outline,
-                          size: 14, color: AppColors.textMuted),
-                      SizedBox(width: 6),
-                      Text('Runs every day',
-                          style: TextStyle(
-                              fontSize: 12, color: AppColors.textMuted)),
-                    ])
-                  else
-                    _datePicker(),
+                  if (!_sessionOnly) ...[
+                    const Text('Occurrence',
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textSecondary)),
+                    const SizedBox(height: 8),
+                    _OccurrencePicker(
+                      value: _occurrence,
+                      onChanged: (v) => setState(() {
+                        _occurrence = v;
+                        if (v != 'once' && v != 'monthly') _specificDate = null;
+                      }),
+                    ),
+                    const SizedBox(height: 12),
+                    if (_occurrence == 'weekly')
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _WeekDayPicker(
+                            selected: _selectedDays,
+                            onChanged: (days) => setState(() {
+                              _selectedDays = days;
+                              // A newly ticked day starts with no times in
+                              // per-day mode; the admin adds them.
+                              if (_perDayTimes) {
+                                for (final d in days) {
+                                  _daySlots.putIfAbsent(d, () => []);
+                                }
+                              }
+                            }),
+                          ),
+                          if (widget.existing == null) ...[
+                            SwitchListTile(
+                              contentPadding: EdgeInsets.zero,
+                              value: _perDayTimes,
+                              onChanged: _setPerDayTimes,
+                              title: const Text(
+                                  'Different times on different days',
+                                  style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.textPrimary)),
+                              subtitle: const Text(
+                                  'e.g. Monday 1–2pm and 2–3pm, Tuesday 5–6pm and 9–10pm',
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      color: AppColors.textSecondary)),
+                            ),
+                            if (_perDayTimes) _perDaySlotsSection(),
+                          ],
+                        ],
+                      )
+                    else if (_occurrence == 'daily')
+                      const Row(children: [
+                        Icon(Icons.info_outline,
+                            size: 14, color: AppColors.textMuted),
+                        SizedBox(width: 6),
+                        Text('Runs every day',
+                            style: TextStyle(
+                                fontSize: 12, color: AppColors.textMuted)),
+                      ])
+                    else
+                      _datePicker(),
+                  ],
                   const SizedBox(height: 16),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
@@ -773,6 +1090,73 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
   }
 
   // ── Sub-widgets ──────────────────────────────────────────────────────────
+
+  /// One block per selected day: its sessions (tap ✕ to remove) and an
+  /// "Add time" button.
+  Widget _perDaySlotsSection() {
+    final days = _orderedSelectedDays;
+    if (days.isEmpty) {
+      return const Text('Select the days above first.',
+          style: TextStyle(fontSize: 12, color: AppColors.textMuted));
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final day in days)
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.divider),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(day,
+                    style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary)),
+                const SizedBox(height: 6),
+                if ((_daySlots[day] ?? const []).isEmpty)
+                  const Text('No times yet',
+                      style: TextStyle(fontSize: 12, color: AppColors.error))
+                else
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    children: [
+                      for (final slot in _daySlots[day]!)
+                        InputChip(
+                          label: Text(
+                            '${_formatTimeOfDay(slot.start)} – ${_formatTimeOfDay(slot.end)}'
+                            ' · ${_formatDurationMinutes(_minutesBetween(slot.start, slot.end))}',
+                          ),
+                          onDeleted: () =>
+                              setState(() => _daySlots[day]!.remove(slot)),
+                        ),
+                    ],
+                  ),
+                TextButton.icon(
+                  onPressed: () => _addDaySlot(day),
+                  icon: const Icon(Icons.add, size: 18),
+                  label: const Text('Add time'),
+                ),
+              ],
+            ),
+          ),
+        const Text(
+          'Each time is created as its own class, so members book each one '
+          'separately. The same time on several days becomes one class '
+          'running on those days.',
+          style: TextStyle(fontSize: 11, color: AppColors.textMuted),
+        ),
+      ],
+    );
+  }
 
   Widget _extraSlotsSection() {
     return Column(
@@ -840,8 +1224,7 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
               ))
           .toList(),
       onChanged: (v) => setState(() => _type = v ?? _type),
-      validator: (v) =>
-          (v == null || v.isEmpty) ? 'Select a type' : null,
+      validator: (v) => (v == null || v.isEmpty) ? 'Select a type' : null,
     );
   }
 
@@ -893,9 +1276,8 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
                     onChanged: (_) => setState(() {
                       final allSelected = _plans
                           .every((p) => _selectedPlanNames.contains(p.name));
-                      _selectedPlanNames = allSelected
-                          ? {}
-                          : _plans.map((p) => p.name).toSet();
+                      _selectedPlanNames =
+                          allSelected ? {} : _plans.map((p) => p.name).toSet();
                     }),
                   ),
                   const Text('Select all',
@@ -942,7 +1324,8 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
 
   Widget _coachDropdown() {
     // Build items — include existing coach name if it's not in the list
-    final names = _coaches.map((c) => c.name).where((n) => n.isNotEmpty).toList();
+    final names =
+        _coaches.map((c) => c.name).where((n) => n.isNotEmpty).toList();
     if (_selectedCoach != null &&
         _selectedCoach!.isNotEmpty &&
         !names.contains(_selectedCoach)) {
@@ -971,12 +1354,10 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
         prefixIcon: const Icon(Icons.person_outline,
             size: 18, color: AppColors.textMuted),
       ),
-      items: names
-          .map((n) => DropdownMenuItem(value: n, child: Text(n)))
-          .toList(),
+      items:
+          names.map((n) => DropdownMenuItem(value: n, child: Text(n))).toList(),
       onChanged: (v) => setState(() => _selectedCoach = v),
-      validator: (v) =>
-          (v == null || v.isEmpty) ? 'Select a coach' : null,
+      validator: (v) => (v == null || v.isEmpty) ? 'Select a coach' : null,
     );
   }
 
@@ -1010,8 +1391,8 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
       onChanged: (v) {
         setState(() => _selectedFacilityId = v);
         if (v == null) return;
-        final fac = _facilities.firstWhere(
-            (f) => f['id'] == v, orElse: () => {});
+        final fac =
+            _facilities.firstWhere((f) => f['id'] == v, orElse: () => {});
         if (fac.isNotEmpty && _location.text.trim().isEmpty) {
           _location.text = fac['name']?.toString() ?? '';
         }
@@ -1030,16 +1411,14 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
           borderRadius: BorderRadius.circular(10),
         ),
         child: Row(children: [
-          const Icon(Icons.access_time,
-              size: 16, color: AppColors.textMuted),
+          const Icon(Icons.access_time, size: 16, color: AppColors.textMuted),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               value == null ? '$label *' : _formatTimeOfDay(value),
               style: TextStyle(
-                color: value == null
-                    ? AppColors.textMuted
-                    : AppColors.textPrimary,
+                color:
+                    value == null ? AppColors.textMuted : AppColors.textPrimary,
                 fontSize: 14,
               ),
             ),
@@ -1064,9 +1443,8 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
         decoration: BoxDecoration(
           border: Border.all(
-              color: _specificDate == null
-                  ? AppColors.error
-                  : AppColors.divider),
+              color:
+                  _specificDate == null ? AppColors.error : AppColors.divider),
           borderRadius: BorderRadius.circular(10),
         ),
         child: Row(children: [
@@ -1124,8 +1502,13 @@ class _WeekDayPicker extends StatelessWidget {
   const _WeekDayPicker({required this.selected, required this.onChanged});
 
   static const _full = [
-    'Monday', 'Tuesday', 'Wednesday', 'Thursday',
-    'Friday', 'Saturday', 'Sunday',
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+    'Sunday',
   ];
   static const _abbr = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -1172,8 +1555,7 @@ class _WeekDayPicker extends StatelessWidget {
                       style: TextStyle(
                         fontSize: 10,
                         fontWeight: FontWeight.w700,
-                        color:
-                            sel ? Colors.white : AppColors.textSecondary,
+                        color: sel ? Colors.white : AppColors.textSecondary,
                       )),
                 ),
               ),
@@ -1241,9 +1623,8 @@ class _OccurrencePicker extends StatelessWidget {
                   Text(label,
                       style: TextStyle(
                         fontSize: 11,
-                        fontWeight: selected
-                            ? FontWeight.w700
-                            : FontWeight.w400,
+                        fontWeight:
+                            selected ? FontWeight.w700 : FontWeight.w400,
                         color: selected
                             ? AppColors.primary
                             : AppColors.textSecondary,

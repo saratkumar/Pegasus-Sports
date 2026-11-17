@@ -16,6 +16,7 @@ import '../../utils/time_utils.dart';
 import '../../widgets/junior_info_sheet.dart';
 import '../../widgets/session_admin_actions.dart';
 import '../../widgets/timeline_range_selector.dart' show formatWithWeekday;
+import 'class_management_screen.dart' show openClassForm;
 
 /// Google Calendar/Outlook-style month (default) or week view of scheduled
 /// classes. Day markers come from the recurring ClassModel templates
@@ -35,8 +36,8 @@ class ClassRosterScreen extends StatefulWidget {
 }
 
 class _ClassRosterScreenState extends State<ClassRosterScreen> {
-  DateTime _selectedDay = DateTime(
-      DateTime.now().year, DateTime.now().month, DateTime.now().day);
+  DateTime _selectedDay =
+      DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
   DateTime _focusedDay = DateTime.now();
   CalendarFormat _calendarFormat = CalendarFormat.month;
 
@@ -48,8 +49,18 @@ class _ClassRosterScreenState extends State<ClassRosterScreen> {
   List<_ClassGroup> _groups = [];
 
   static const _months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
   ];
 
   @override
@@ -103,7 +114,8 @@ class _ClassRosterScreenState extends State<ClassRosterScreen> {
     // trying to reconstruct it from the Sheet log, which has no stable way
     // to correlate a "joined" event with its eventual resolution.
     final waitingCounts = await Future.wait(
-      groups.map((g) => WaitingListService.getWaitingCount(g.classId, _selectedDay)),
+      groups.map(
+          (g) => WaitingListService.getWaitingCount(g.classId, _selectedDay)),
     );
     for (var i = 0; i < groups.length; i++) {
       groups[i].waiting = waitingCounts[i];
@@ -184,13 +196,14 @@ class _ClassRosterScreenState extends State<ClassRosterScreen> {
           return _ClassGroup(
             classId: classId,
             className: cls?.mode ?? r['className'] ?? '',
-            sessionTime: cls?.startTime ??
-                (parseTimeString(raw) != null ? raw : ''),
+            sessionTime:
+                cls?.startTime ?? (parseTimeString(raw) != null ? raw : ''),
           );
         },
       );
       group.members.add(_RosterEntry(
-        userName: r['userName']?.isNotEmpty == true ? r['userName']! : 'Unknown',
+        userName:
+            r['userName']?.isNotEmpty == true ? r['userName']! : 'Unknown',
         eventType: type,
         bookedByRole: r['bookedByRole'] ?? 'client',
       ));
@@ -206,7 +219,8 @@ class _ClassRosterScreenState extends State<ClassRosterScreen> {
           a.userName.toLowerCase().compareTo(b.userName.toLowerCase()));
     }
     final list = groups.values.toList()
-      ..sort((a, b) => minutes(a.sessionTime).compareTo(minutes(b.sessionTime)));
+      ..sort(
+          (a, b) => minutes(a.sessionTime).compareTo(minutes(b.sessionTime)));
     return list;
   }
 
@@ -249,6 +263,80 @@ class _ClassRosterScreenState extends State<ClassRosterScreen> {
     AppToast.success(context, 'Booked ${booked.name} into ${group.className}');
   }
 
+  /// Edit the session's class (title, time, capacity, coach, …).
+  Future<void> _editSession(_ClassGroup group) async {
+    final cls = _findClass(group.classId);
+    if (cls == null) {
+      AppToast.error(context, 'Could not find this class — try refreshing');
+      return;
+    }
+    // A repeating class: this date only, or every session?
+    var sessionOnly = false;
+    if (cls.occurrence != 'once') {
+      final choice = await showModalBottomSheet<String>(
+        context: context,
+        backgroundColor: AppColors.bg,
+        shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+        builder: (ctx) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(8, 16, 8, 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Text('Edit ${cls.mode}',
+                      style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textPrimary)),
+                ),
+                const SizedBox(height: 8),
+                ListTile(
+                  leading:
+                      const Icon(Icons.event_note, color: AppColors.primary),
+                  title: Text(
+                      'Only this session — ${formatWithWeekday(_selectedDay)}',
+                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                  subtitle: const Text(
+                      'Change title, time, capacity or coach for this date. Other weeks stay the same.',
+                      style: TextStyle(fontSize: 12)),
+                  onTap: () => Navigator.pop(ctx, 'session'),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.repeat, color: AppColors.primary),
+                  title: const Text('All sessions of this class',
+                      style: TextStyle(fontWeight: FontWeight.w600)),
+                  subtitle: const Text('Changes every week from now on.',
+                      style: TextStyle(fontSize: 12)),
+                  onTap: () => Navigator.pop(ctx, 'series'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      if (choice == null || !mounted) return;
+      sessionOnly = choice == 'session';
+    }
+    if (!await openClassForm(context,
+            existing: cls, sessionDate: sessionOnly ? _selectedDay : null) ||
+        !mounted) {
+      return;
+    }
+    await _loadClasses();
+    if (mounted) _load();
+  }
+
+  /// New session on the selected day (a one-off by default).
+  Future<void> _addSession() async {
+    if (!await openClassForm(context, onDate: _selectedDay) || !mounted) return;
+    await _loadClasses();
+    if (mounted) _load();
+  }
+
   Future<void> _manageSession(_ClassGroup group) async {
     final cls = _findClass(group.classId);
     if (cls == null) {
@@ -265,6 +353,13 @@ class _ClassRosterScreenState extends State<ClassRosterScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _addSession,
+        backgroundColor: AppColors.primary,
+        foregroundColor: Colors.white,
+        icon: const Icon(Icons.add),
+        label: const Text('Add session'),
+      ),
       appBar: AppBar(
         title: const Text('Class Roster'),
         actions: [
@@ -282,143 +377,164 @@ class _ClassRosterScreenState extends State<ClassRosterScreen> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          Container(
-            color: AppColors.card,
-            child: TableCalendar<ClassModel>(
-              firstDay: DateTime(DateTime.now().year - 1, 1, 1),
-              lastDay: DateTime(DateTime.now().year + 1, 12, 31),
-              focusedDay: _focusedDay,
-              currentDay: DateTime.now(),
-              selectedDayPredicate: (day) => isSameDay(day, _selectedDay),
-              calendarFormat: _calendarFormat,
-              availableCalendarFormats: const {
-                CalendarFormat.month: 'Month',
-                CalendarFormat.week: 'Week',
-              },
-              eventLoader: _classesForDay,
-              onDaySelected: _onDaySelected,
-              onFormatChanged: (format) =>
-                  setState(() => _calendarFormat = format),
-              onPageChanged: (focused) =>
-                  setState(() => _focusedDay = focused),
-              headerStyle: HeaderStyle(
-                titleCentered: true,
-                formatButtonShowsNext: false,
-                // No `intl` package used elsewhere in this app — build the
-                // header text from a plain array instead of DateFormat.
-                titleTextFormatter: (date, locale) =>
-                    '${_months[date.month - 1]} ${date.year}',
-                formatButtonDecoration: BoxDecoration(
-                  border: Border.all(
-                      color: AppColors.primary.withValues(alpha: 0.4)),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                formatButtonTextStyle:
-                    const TextStyle(color: AppColors.primary, fontSize: 12),
-              ),
-              daysOfWeekStyle: const DaysOfWeekStyle(
-                weekdayStyle: TextStyle(color: AppColors.textSecondary, fontSize: 12),
-                weekendStyle: TextStyle(color: AppColors.textSecondary, fontSize: 12),
-              ),
-              calendarStyle: CalendarStyle(
-                outsideDaysVisible: false,
-                selectedDecoration: const BoxDecoration(
-                    color: AppColors.primary, shape: BoxShape.circle),
-                todayDecoration: BoxDecoration(
-                    color: AppColors.primary.withValues(alpha: 0.25),
-                    shape: BoxShape.circle),
-                markerDecoration: const BoxDecoration(
-                    color: AppColors.primary, shape: BoxShape.circle),
-                markersMaxCount: 1,
-              ),
-              calendarBuilders: CalendarBuilders(
-                markerBuilder: (context, day, events) {
-                  if (events.isEmpty) return null;
-                  return Positioned(
-                    bottom: 4,
-                    child: Container(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                      decoration: BoxDecoration(
-                        color: AppColors.primary,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        '${events.length}',
-                        style: const TextStyle(
-                            fontSize: 9,
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700),
-                      ),
-                    ),
-                  );
+      // One scroll view for calendar + list: the month view is tall, and a
+      // fixed calendar above an Expanded list overflowed on short screens
+      // (e.g. a laptop browser window).
+      body: CustomScrollView(
+        slivers: [
+          SliverToBoxAdapter(
+            child: Container(
+              color: AppColors.card,
+              child: TableCalendar<ClassModel>(
+                firstDay: DateTime(DateTime.now().year - 1, 1, 1),
+                lastDay: DateTime(DateTime.now().year + 1, 12, 31),
+                focusedDay: _focusedDay,
+                currentDay: DateTime.now(),
+                selectedDayPredicate: (day) => isSameDay(day, _selectedDay),
+                calendarFormat: _calendarFormat,
+                availableCalendarFormats: const {
+                  CalendarFormat.month: 'Month',
+                  CalendarFormat.week: 'Week',
                 },
+                eventLoader: _classesForDay,
+                onDaySelected: _onDaySelected,
+                onFormatChanged: (format) =>
+                    setState(() => _calendarFormat = format),
+                onPageChanged: (focused) =>
+                    setState(() => _focusedDay = focused),
+                headerStyle: HeaderStyle(
+                  titleCentered: true,
+                  formatButtonShowsNext: false,
+                  // No `intl` package used elsewhere in this app — build the
+                  // header text from a plain array instead of DateFormat.
+                  titleTextFormatter: (date, locale) =>
+                      '${_months[date.month - 1]} ${date.year}',
+                  formatButtonDecoration: BoxDecoration(
+                    border: Border.all(
+                        color: AppColors.primary.withValues(alpha: 0.4)),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  formatButtonTextStyle:
+                      const TextStyle(color: AppColors.primary, fontSize: 12),
+                ),
+                daysOfWeekStyle: const DaysOfWeekStyle(
+                  weekdayStyle:
+                      TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                  weekendStyle:
+                      TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                ),
+                calendarStyle: CalendarStyle(
+                  outsideDaysVisible: false,
+                  selectedDecoration: const BoxDecoration(
+                      color: AppColors.primary, shape: BoxShape.circle),
+                  todayDecoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.25),
+                      shape: BoxShape.circle),
+                  markerDecoration: const BoxDecoration(
+                      color: AppColors.primary, shape: BoxShape.circle),
+                  markersMaxCount: 1,
+                ),
+                calendarBuilders: CalendarBuilders(
+                  markerBuilder: (context, day, events) {
+                    if (events.isEmpty) return null;
+                    return Positioned(
+                      bottom: 4,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 5, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          '${events.length}',
+                          style: const TextStyle(
+                              fontSize: 9,
+                              color: Colors.white,
+                              fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    );
+                  },
+                ),
               ),
             ),
           ),
-          const Divider(height: 1),
-          Container(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    formatWithWeekday(_selectedDay),
-                    style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.textPrimary),
+          const SliverToBoxAdapter(child: Divider(height: 1)),
+          SliverToBoxAdapter(
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      formatWithWeekday(_selectedDay),
+                      style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textPrimary),
+                    ),
                   ),
-                ),
-                if (_loaded)
-                  Text(
-                    '${_groups.length} scheduled',
-                    style: const TextStyle(
-                        fontSize: 12, color: AppColors.textSecondary),
-                  ),
-              ],
+                  if (_loaded)
+                    Text(
+                      '${_groups.length} scheduled',
+                      style: const TextStyle(
+                          fontSize: 12, color: AppColors.textSecondary),
+                    ),
+                ],
+              ),
             ),
           ),
-          Container(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
-            child: const Text(
-              'Roster read from the Google Sheet activity mirror, not Firestore — '
-              'a best-effort convenience view, not an audit-proof record.',
-              style: TextStyle(fontSize: 11, color: AppColors.textMuted),
+          SliverToBoxAdapter(
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+              child: const Text(
+                'Roster read from the Google Sheet activity mirror, not Firestore — '
+                'a best-effort convenience view, not an audit-proof record.',
+                style: TextStyle(fontSize: 11, color: AppColors.textMuted),
+              ),
             ),
           ),
-          const SizedBox(height: 8),
+          const SliverToBoxAdapter(child: SizedBox(height: 8)),
           if (!_loaded)
-            const Expanded(
-              child: Center(
-                  child: CircularProgressIndicator(color: AppColors.primary)),
+            const SliverFillRemaining(
+              hasScrollBody: false,
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: 32),
+                child: Center(
+                    child: CircularProgressIndicator(color: AppColors.primary)),
+              ),
             )
           else if (_groups.isEmpty)
-            const Expanded(
-              child: Center(
-                child: Text('No classes scheduled for this day',
-                    style: TextStyle(color: AppColors.textSecondary)),
+            const SliverFillRemaining(
+              hasScrollBody: false,
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: 32),
+                child: Center(
+                  child: Text('No classes scheduled for this day',
+                      style: TextStyle(color: AppColors.textSecondary)),
+                ),
               ),
             )
           else
-            Expanded(
-              child: ListView.separated(
-                // Extra bottom inset so the last card never sits flush
-                // against the browser/device's own bottom chrome — a plain
-                // ListView isn't safe-area-aware by default (same pattern
-                // used in class_management_screen.dart's form).
-                padding: EdgeInsets.fromLTRB(
-                    14, 14, 14, 14 + MediaQuery.of(context).padding.bottom + 24),
+            SliverPadding(
+              // Extra bottom inset so the last card never sits flush
+              // against the browser/device's own bottom chrome.
+              padding: EdgeInsets.fromLTRB(
+                  14, 14, 14, 14 + MediaQuery.of(context).padding.bottom + 24),
+              sliver: SliverList.separated(
                 itemCount: _groups.length,
                 separatorBuilder: (_, __) => const SizedBox(height: 8),
                 itemBuilder: (context, i) => _GroupCard(
                   group: _groups[i],
-                  onManage: _classesLoading ||
-                          _findClass(_groups[i].classId) == null
-                      ? null
-                      : () => _manageSession(_groups[i]),
+                  onEdit:
+                      _classesLoading || _findClass(_groups[i].classId) == null
+                          ? null
+                          : () => _editSession(_groups[i]),
+                  onManage:
+                      _classesLoading || _findClass(_groups[i].classId) == null
+                          ? null
+                          : () => _manageSession(_groups[i]),
                   onBookForClient: _classesLoading
                       ? null
                       : () => _openBookForClient(_groups[i]),
@@ -468,11 +584,13 @@ class _GroupCard extends StatelessWidget {
   final VoidCallback? onBookForClient;
   final VoidCallback onShowJuniors;
   final VoidCallback? onManage;
+  final VoidCallback? onEdit;
   const _GroupCard({
     required this.group,
     this.onBookForClient,
     required this.onShowJuniors,
     this.onManage,
+    this.onEdit,
   });
 
   @override
@@ -491,13 +609,14 @@ class _GroupCard extends StatelessWidget {
               style: const TextStyle(
                   fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
           subtitle: Text(group.sessionTime,
-              style:
-                  const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+              style: const TextStyle(
+                  fontSize: 12, color: AppColors.textSecondary)),
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
                   color: AppColors.primary.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(20),
@@ -511,7 +630,8 @@ class _GroupCard extends StatelessWidget {
               if (group.waiting > 0) ...[
                 const SizedBox(width: 6),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
                     color: const Color(0xFFFFAB40).withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(20),
@@ -543,6 +663,12 @@ class _GroupCard extends StatelessWidget {
                         size: 16),
                     label: const Text('Juniors & medical info'),
                   ),
+                  if (onEdit != null)
+                    TextButton.icon(
+                      onPressed: onEdit,
+                      icon: const Icon(Icons.edit_outlined, size: 16),
+                      label: const Text('Edit'),
+                    ),
                   if (onManage != null)
                     TextButton.icon(
                       onPressed: onManage,
@@ -680,7 +806,7 @@ class _BookForClientSheetState extends State<_BookForClientSheet> {
           '${client.name} has no credits available',
         BookingFailureReason.classFull => 'Class is full',
         BookingFailureReason.attendeeIneligible =>
-            'Attendee is not eligible for this session',
+          'Attendee is not eligible for this session',
         BookingFailureReason.unknown =>
           'Booking failed: ${result.errorDetail ?? ''}',
       };
@@ -717,7 +843,8 @@ class _BookForClientSheetState extends State<_BookForClientSheet> {
             .toList();
 
     return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding:
+          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: DraggableScrollableSheet(
         initialChildSize: 0.7,
         minChildSize: 0.4,
@@ -756,8 +883,8 @@ class _BookForClientSheetState extends State<_BookForClientSheet> {
                   onChanged: (v) => setState(() => _query = v),
                   decoration: InputDecoration(
                     hintText: 'Search clients by name or email...',
-                    prefixIcon:
-                        const Icon(Icons.search, size: 18, color: AppColors.textMuted),
+                    prefixIcon: const Icon(Icons.search,
+                        size: 18, color: AppColors.textMuted),
                     contentPadding: const EdgeInsets.symmetric(
                         horizontal: 14, vertical: 10),
                     border: OutlineInputBorder(
@@ -793,7 +920,8 @@ class _BookForClientSheetState extends State<_BookForClientSheet> {
                       final isBooking = _bookingUid == c.uid;
                       return ListTile(
                         title: Text(c.name,
-                            style: const TextStyle(color: AppColors.textPrimary)),
+                            style:
+                                const TextStyle(color: AppColors.textPrimary)),
                         subtitle: Text(c.email,
                             style: const TextStyle(
                                 fontSize: 12, color: AppColors.textSecondary)),
@@ -806,7 +934,9 @@ class _BookForClientSheetState extends State<_BookForClientSheet> {
                               )
                             : const Icon(Icons.chevron_right,
                                 color: AppColors.textMuted),
-                        onTap: _bookingUid != null ? null : () => _confirmAndBook(c),
+                        onTap: _bookingUid != null
+                            ? null
+                            : () => _confirmAndBook(c),
                       );
                     },
                   ),
