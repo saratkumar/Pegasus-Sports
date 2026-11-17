@@ -1013,7 +1013,7 @@ class _CreateUserSheetState extends State<_CreateUserSheet> {
       if (mounted) {
         Navigator.pop(context);
         AppToast.success(context,
-            'Invitation created — ${_name.text.trim()} can now sign in with Google');
+            'Invitation emailed to ${_email.text.trim()} — they can now sign in with that email');
       }
     } catch (e, st) {
       setState(() => _saving = false);

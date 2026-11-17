@@ -79,4 +79,87 @@ function buildRenewalReminderEmail({ to, name, planName, endDate, creditsRemaini
   };
 }
 
-module.exports = { buildRenewalReminderEmail };
+// Store links for the invitation email. Leave empty while the app is only in
+// closed testing (a public store link shows "not found" to non-testers);
+// fill them in once the app is publicly listed and they'll appear as
+// download buttons.
+const PLAY_STORE_URL = ""; // e.g. https://play.google.com/store/apps/details?id=com.psas.booking
+const APP_STORE_URL = ""; // e.g. https://apps.apple.com/app/id<number>
+
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function button(href, label) {
+  return `
+        <a href="${href}"
+           style="display: inline-block; background-color: #FF7A00; color: #ffffff; font-weight: bold;
+                  text-decoration: none; padding: 12px 24px; border-radius: 8px;
+                  font-family: sans-serif; font-size: 15px; margin: 4px;">
+          ${label}
+        </a>`;
+}
+
+// Sent when an admin adds someone under Users → Add User. Sign-up is
+// invite-only, so the key message is "sign in with THIS email" — a
+// different Google/Apple account is refused.
+function buildInvitationEmail({ to, name, role }) {
+  const safeName = escapeHtml(name || "there");
+  const safeEmail = escapeHtml(to);
+  const roleLine = role === "trainer"
+    ? "You've been added as a <strong>trainer</strong>, so you'll see your classes and rosters once you sign in."
+    : role === "admin"
+      ? "You've been added as an <strong>admin</strong>, so you'll have access to the admin tools once you sign in."
+      : "Once you sign in you can view the timetable, buy a membership and book classes.";
+
+  const storeButtons = [
+    PLAY_STORE_URL && button(PLAY_STORE_URL, "Get it on Google Play"),
+    APP_STORE_URL && button(APP_STORE_URL, "Download on the App Store"),
+  ].filter(Boolean).join("");
+
+  const html = `
+    <div style="font-family: sans-serif; color: #0A0A0A; max-width: 480px; margin: 0 auto;">
+      <h2 style="color: #FF7A00; margin: 0 0 16px;">You're invited to PSAS</h2>
+      <p style="margin: 0 0 12px;">Hi ${safeName},</p>
+      <p style="margin: 0 0 12px;">
+        Pegasus Sports &amp; Psychology Performance has set up your account. ${roleLine}
+      </p>
+
+      <p style="margin: 0 0 8px; font-weight: bold;">To get started:</p>
+      <ol style="margin: 0 0 16px; padding-left: 20px; line-height: 1.6;">
+        <li>Download the <strong>Pegasus Sports Psychology</strong> app from Google Play or the App Store.</li>
+        <li>Open it and sign in with the email below.</li>
+      </ol>
+
+      <div style="border: 1px solid #eeeeee; border-radius: 8px; padding: 14px; margin: 0 0 20px;">
+        <div style="color: #666666; font-size: 13px; margin: 0 0 4px;">Sign in with this email</div>
+        <div style="font-weight: bold; font-size: 16px;">${safeEmail}</div>
+        <div style="color: #666666; font-size: 12px; margin: 8px 0 0;">
+          Use "Sign in with Google" (or "Sign in with Apple" on iPhone) with this
+          exact address. Other accounts won't be recognised.
+        </div>
+      </div>
+${storeButtons ? `
+      <div style="text-align: center; margin: 0 0 20px;">${storeButtons}
+      </div>` : ""}
+      <p style="color: #666666; font-size: 12px;">
+        Trouble signing in? <a href="mailto:admin.psas@gmail.com">admin.psas@gmail.com</a>
+      </p>
+    </div>
+  `;
+
+  return {
+    to: [to],
+    message: {
+      subject: "You're invited to PSAS - sign in to get started",
+      html,
+    },
+  };
+}
+
+module.exports = { buildRenewalReminderEmail, buildInvitationEmail };

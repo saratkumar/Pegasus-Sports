@@ -2,6 +2,8 @@ const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onDocumentCreated } = require("firebase-functions/v2/firestore");
 const { setGlobalOptions } = require("firebase-functions/v2");
 const admin = require("firebase-admin");
+const { Timestamp } = require("firebase-admin/firestore");
+const { buildInvitationEmail } = require("./emailTemplates");
 
 admin.initializeApp();
 
@@ -559,6 +561,29 @@ const APPS_SCRIPT_ALLOWED_ACTIONS = new Set([
   "record_transaction",
   "get_transactions",
 ]);
+
+// ── onInvitationCreated: email the invited person ──────────────────────────
+// Sign-up is invite-only, so without this an invited person has no way to
+// know they can sign in (or which email to use). Queued through the same
+// `mail` collection the Trigger Email extension sends from. Runs on
+// create only, so editing an invitation doesn't re-send it.
+exports.onInvitationCreated = onDocumentCreated("invitations/{email}", async (event) => {
+  const inv = event.data?.data();
+  const to = String(inv?.email || event.params.email || "").trim().toLowerCase();
+  if (!to || !to.includes("@")) return;
+
+  const db = admin.firestore();
+  // Already has a working account (not just an imported placeholder) —
+  // the invitation won't be used, so don't tell them to "get started".
+  const existing = await db.collection("users").where("email", "==", to).get();
+  if (existing.docs.some((d) => d.get("importedPending") !== true)) {
+    await event.data.ref.update({ emailSkipped: "existing-account" });
+    return;
+  }
+
+  await db.collection("mail").add(buildInvitationEmail({ to, name: inv.name, role: inv.role }));
+  await event.data.ref.update({ emailQueuedAt: Timestamp.now() });
+});
 
 // ── onUserCreated: hand imported members their data ────────────────────────
 // Members migrated from Glofox were imported as users/{autoId} docs flagged
