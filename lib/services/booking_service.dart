@@ -51,17 +51,17 @@ class BookingResult {
 /// this code, so bundling them here would incorrectly notify an admin's
 /// device instead of the client's; callers own that concern themselves.
 class BookingService {
-  /// Junior packages ([MembershipPlanModel.isJunior]) are for children only:
-  /// when the account holder attends ([attendee] null) they're excluded
-  /// outright; when a child attends they're drawn from first, falling back
-  /// to the parent's other plans (parents may spend their own credits on
-  /// their children). A child not yet approved by staff is treated like the
-  /// account holder: junior credits are excluded until verification.
+  /// Rules for the ACCOUNT HOLDER's wallet. Junior packages
+  /// ([MembershipPlanModel.isJunior]) live on the child they were bought for
+  /// (users/{uid}/dependents/{childId}.memberships) and are drawn from there
+  /// first whenever that child attends — see
+  /// [UserService.deductCreditAndWrite]'s `childId`. Junior plan names stay
+  /// excluded from the holder's own wallet regardless, so a junior package
+  /// that ever lands there (e.g. one bought before packages were per-child)
+  /// still can't be spent on an adult.
   static Future<CreditRules> creditRulesFor(DependentModel? attendee) async {
     final junior = await MembershipPlanService.getJuniorPlanNames();
-    return attendee == null || !attendee.isVerified
-        ? (excluded: junior, preferred: const <String>{})
-        : (excluded: const <String>{}, preferred: junior);
+    return (excluded: junior, preferred: const <String>{});
   }
 
   /// Name recorded in the activity log / roster for a booking — the child's
@@ -80,12 +80,27 @@ class BookingService {
   /// empty [ClassModel.allowedPlanNames] is unrestricted; otherwise [uid]
   /// must hold an eligible plan (active or queued), other than any in
   /// [excludedPlanNames], or have unrestricted admin-granted access.
+  ///
+  /// [child] attending: their own junior packages count too, and the
+  /// holder's plans only if [parentFallback] (a parent booking for their
+  /// child, not a child booking for themselves).
   static Future<bool> canBookClass(
     ClassModel cls,
     String uid, {
     Set<String> excludedPlanNames = const {},
+    DependentModel? child,
+    bool parentFallback = true,
   }) async {
     if (cls.allowedPlanNames.isEmpty) return true;
+    if (child != null) {
+      final now = DateTime.now();
+      if (child.memberships.any((m) =>
+          cls.allowedPlanNames.contains(m.planName) &&
+          ((m.isActive && m.endDate.isAfter(now)) || m.isQueued))) {
+        return true;
+      }
+      if (!parentFallback) return false;
+    }
     final user = await UserService.getUser(uid);
     if (user == null) return false;
     if (user.hasUnrestrictedAccess) return true;
@@ -116,6 +131,7 @@ class BookingService {
     required String bookedByRole,
     String? targetUserName,
     DependentModel? attendee,
+    bool parentCreditsAllowed = true,
   }) async {
     final classId = cls.effectiveId;
 
@@ -151,7 +167,9 @@ class BookingService {
 
       final rules = await creditRulesFor(attendee);
       if (!await canBookClass(cls, targetUid,
-          excludedPlanNames: rules.excluded)) {
+          excludedPlanNames: rules.excluded,
+          child: attendee,
+          parentFallback: parentCreditsAllowed)) {
         return const BookingResult.failure(BookingFailureReason.planNotAllowed);
       }
 
@@ -159,7 +177,9 @@ class BookingService {
       final results = await Future.wait([
         UserService.hasEnoughCredits(targetUid,
             allowedPlanNames: cls.allowedPlanNames,
-            excludedPlanNames: rules.excluded),
+            excludedPlanNames: rules.excluded,
+            childId: attendee?.id,
+            parentFallback: parentCreditsAllowed),
         ClassService.getBookingCount(classId, date),
       ]);
       final hasCredits = results[0] as bool;
@@ -178,7 +198,8 @@ class BookingService {
       // orphaned without its credit actually being deducted, or vice versa.
       final bookingRef =
           FirebaseFirestore.instance.collection('bookings').doc();
-      await UserService.deductCreditAndWrite(targetUid, (tx, sourceEntryId) {
+      await UserService.deductCreditAndWrite(targetUid,
+          (tx, sourceEntryId, fromChild) {
         tx.set(bookingRef, {
           'userId': targetUid,
           'classId': classId,
@@ -192,13 +213,16 @@ class BookingService {
           'bookedByRole': bookedByRole,
           'creditsUsed': 1,
           'creditSourceEntryId': sourceEntryId,
+          if (fromChild) 'creditWallet': 'child',
           if (attendee != null) 'attendeeId': attendee.id,
           if (attendee != null) 'attendeeName': attendee.name,
         });
       },
           allowedPlanNames: cls.allowedPlanNames,
           excludedPlanNames: rules.excluded,
-          preferredPlanNames: rules.preferred);
+          preferredPlanNames: rules.preferred,
+          childId: attendee?.id,
+          parentFallback: parentCreditsAllowed);
 
       unawaited(ConfigService.logActivityEvent(
         eventType: 'Booked',

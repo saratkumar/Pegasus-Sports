@@ -21,6 +21,7 @@ import '../../utils/error_reporter.dart';
 import '../../utils/plan_category_style.dart';
 import '../../utils/require_login.dart';
 import '../../utils/stripe_fee_estimator.dart';
+import '../../widgets/junior_plans.dart';
 import '../profile/family_screen.dart';
 
 class MembershipScreen extends StatefulWidget {
@@ -33,16 +34,50 @@ class MembershipScreen extends StatefulWidget {
 class _MembershipScreenState extends State<MembershipScreen> {
   String? _selectedCategory;
 
-  /// Junior packages can only be bought by a parent with at least one child
-  /// profile currently aged 6–17 — their credits can't be used for anyone
-  /// else (see BookingService.creditRulesFor). Offers to add a child if not.
-  Future<bool> _verifyJuniorEligible(BuildContext context) async {
+  /// A junior package is bought by the parent but assigned to ONE approved
+  /// child aged 6–17 — it's stored on that child and only their bookings can
+  /// use it (never the parent's own, nor a sibling's). Returns the chosen
+  /// child, or null if there's no eligible child (explaining why, and
+  /// offering to add one) or the parent backs out of the choice.
+  Future<DependentModel?> _pickJuniorChild(BuildContext context) async {
     final uid = FirebaseAuth.instance.currentUser!.uid;
     final children = (await DependentService.getActive(uid))
         .where((c) => c.isEligibleJuniorOn())
         .toList();
-    if (children.any((c) => c.isVerified)) return true;
-    if (!context.mounted) return false;
+    final approved = children.where((c) => c.isVerified).toList();
+    if (approved.length == 1) return approved.single;
+    if (approved.length > 1) {
+      if (!context.mounted) return null;
+      return showDialog<DependentModel>(
+        context: context,
+        builder: (ctx) => SimpleDialog(
+          title: const Text('Who is this package for?'),
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(24, 0, 24, 8),
+              child: Text(
+                  'Only this child will be able to use its credits.',
+                  style: TextStyle(
+                      fontSize: 13, color: AppColors.textSecondary)),
+            ),
+            for (final c in approved)
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(ctx, c),
+                child: Row(children: [
+                  const Icon(Icons.child_care_rounded,
+                      size: 20, color: AppColors.primary),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text(c.name)),
+                  Text('age ${c.ageOn()}',
+                      style: const TextStyle(
+                          fontSize: 12, color: AppColors.textMuted)),
+                ]),
+              ),
+          ],
+        ),
+      );
+    }
+    if (!context.mounted) return null;
     if (children.any((c) => !c.isRejected)) {
       await showDialog<void>(
         context: context,
@@ -58,7 +93,7 @@ class _MembershipScreenState extends State<MembershipScreen> {
           ],
         ),
       );
-      return false;
+      return null;
     }
     final addChild = await showDialog<bool>(
       context: context,
@@ -84,7 +119,7 @@ class _MembershipScreenState extends State<MembershipScreen> {
         MaterialPageRoute(builder: (_) => FamilyScreen(parentUid: uid)),
       );
     }
-    return false;
+    return null;
   }
 
   Future<void> _openCheckout(
@@ -94,7 +129,11 @@ class _MembershipScreenState extends State<MembershipScreen> {
     // immediately) for anyone already properly signed in, mobile included.
     if (!await requireRealSignIn(context)) return;
     if (!context.mounted) return;
-    if (plan.isJunior && !await _verifyJuniorEligible(context)) return;
+    DependentModel? child;
+    if (plan.isJunior) {
+      child = await _pickJuniorChild(context);
+      if (child == null) return;
+    }
     if (!context.mounted) return;
 
     // The checkout sheet only collects the coupon/card-tier choice and pops
@@ -111,7 +150,7 @@ class _MembershipScreenState extends State<MembershipScreen> {
       backgroundColor: AppColors.bg,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (_) => _CheckoutSheet(plan: plan),
+      builder: (_) => _CheckoutSheet(plan: plan, child: child),
     );
     if (result == null || !context.mounted) return;
     final (coupon, finalAmount, cardRegion, cardBrand) = result;
@@ -119,7 +158,8 @@ class _MembershipScreenState extends State<MembershipScreen> {
         coupon: coupon,
         finalAmount: finalAmount,
         cardRegion: cardRegion,
-        cardBrand: cardBrand);
+        cardBrand: cardBrand,
+        child: child);
   }
 
   Future<void> _purchase(
@@ -129,9 +169,14 @@ class _MembershipScreenState extends State<MembershipScreen> {
     required double finalAmount,
     required String cardRegion,
     required String cardBrand,
+    DependentModel? child,
   }) async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
+    // The parent pays and gets the receipt; a junior package is labelled
+    // with the child it's for.
+    final invoicePlanName =
+        child == null ? plan.name : '${plan.name} (for ${child.name})';
     if (!context.mounted) return;
 
     // Shown only now that the checkout sheet has fully closed (see
@@ -163,6 +208,7 @@ class _MembershipScreenState extends State<MembershipScreen> {
           currency: 'sgd',
           cardRegion: cardRegion,
           cardBrand: cardBrand,
+          dependentId: child?.id,
         );
         paymentRef = payment.paymentIntentId;
         feeAmount = payment.feeAmount;
@@ -193,6 +239,7 @@ class _MembershipScreenState extends State<MembershipScreen> {
           credits: plan.credits,
           validityDays: plan.validityDays,
           couponCode: coupon.code,
+          dependentId: child?.id,
         );
       }
 
@@ -218,6 +265,8 @@ class _MembershipScreenState extends State<MembershipScreen> {
         'clientName': currentUser?.displayName ?? 'Member',
         'clientEmail': currentUser?.email ?? '',
         'planName': plan.name,
+        if (child != null) 'dependentId': child.id,
+        if (child != null) 'dependentName': child.name,
         'credits': plan.credits,
         'amount': finalAmount,
         'currency': 'SGD',
@@ -240,7 +289,7 @@ class _MembershipScreenState extends State<MembershipScreen> {
         paymentIntentId: paymentRef,
         clientName: currentUser?.displayName ?? 'Member',
         clientEmail: currentUser?.email ?? '',
-        planName: plan.name,
+        planName: invoicePlanName,
         credits: plan.credits,
         amount: finalAmount,
         currency: 'SGD',
@@ -266,8 +315,8 @@ class _MembershipScreenState extends State<MembershipScreen> {
         AppToast.success(
           context,
           emailSent
-              ? '${plan.name} activated! +${plan.credits} credits added — invoice emailed to you'
-              : '${plan.name} activated! +${plan.credits} credits added — invoice email failed, our team has been notified',
+              ? '$invoicePlanName activated! +${plan.credits} credits added — invoice emailed to you'
+              : '$invoicePlanName activated! +${plan.credits} credits added — invoice email failed, our team has been notified',
         );
       }
     } on StripeException catch (e, st) {
@@ -364,6 +413,7 @@ class _MembershipScreenState extends State<MembershipScreen> {
                               user: user,
                               activePlans: activePlans,
                               queuedPlans: queuedPlans),
+                        if (user != null) _ChildrenPackages(parentUid: user.uid),
                         const SizedBox(height: 8),
                         _CategoryBar(
                           categories: categories,
@@ -407,6 +457,59 @@ class _MembershipScreenState extends State<MembershipScreen> {
                 );
               },
             );
+  }
+}
+
+// ── Children's junior packages ───────────────────────────────────────────────
+
+/// Each child's own junior packages, under the parent's banner — kept
+/// separate because those credits are only for that child (the parent's
+/// total above never includes them). Hidden when no child has a package.
+class _ChildrenPackages extends StatelessWidget {
+  final String parentUid;
+  const _ChildrenPackages({required this.parentUid});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<List<DependentModel>>(
+      stream: DependentService.streamActive(parentUid),
+      builder: (context, snap) {
+        final kids = (snap.data ?? [])
+            .where((c) =>
+                c.activeMemberships.isNotEmpty ||
+                c.queuedMemberships.isNotEmpty)
+            .toList();
+        if (kids.isEmpty) return const SizedBox.shrink();
+        return Container(
+          margin: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppColors.divider),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (var i = 0; i < kids.length; i++) ...[
+                if (i > 0) const SizedBox(height: 12),
+                Row(children: [
+                  const Icon(Icons.child_care_rounded,
+                      size: 16, color: AppColors.primary),
+                  const SizedBox(width: 6),
+                  Text('${kids[i].name} · ${kids[i].usableCredits} credits',
+                      style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textPrimary)),
+                ]),
+                JuniorPlansSection(parentUid: parentUid, child: kids[i]),
+              ],
+            ],
+          ),
+        );
+      },
+    );
   }
 }
 
@@ -893,8 +996,10 @@ class _PlanCard extends StatelessWidget {
 
 class _CheckoutSheet extends StatefulWidget {
   final MembershipPlanModel plan;
+  /// The child a junior package is being bought for (null = adult plan).
+  final DependentModel? child;
 
-  const _CheckoutSheet({required this.plan});
+  const _CheckoutSheet({required this.plan, this.child});
 
   @override
   State<_CheckoutSheet> createState() => _CheckoutSheetState();
@@ -943,6 +1048,7 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
         plan: widget.plan,
         amount: _finalAmount,
         coupon: _appliedCoupon?.code,
+        child: widget.child,
       ),
     );
     if (submitted == true && mounted) Navigator.pop(context);
@@ -1018,6 +1124,31 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
           const SizedBox(height: 4),
           Text(widget.plan.subtitle,
               style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+          if (widget.child != null) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppColors.primary.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(children: [
+                const Icon(Icons.child_care_rounded,
+                    size: 18, color: AppColors.primary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'For ${widget.child!.name} — only they can use these credits',
+                    style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary),
+                  ),
+                ),
+              ]),
+            ),
+          ],
           const SizedBox(height: 20),
           Row(children: [
             Expanded(
@@ -1230,8 +1361,10 @@ class _QrPaySheet extends StatefulWidget {
   final MembershipPlanModel plan;
   final double amount;
   final String? coupon;
+  final DependentModel? child;
 
-  const _QrPaySheet({required this.plan, required this.amount, this.coupon});
+  const _QrPaySheet(
+      {required this.plan, required this.amount, this.coupon, this.child});
 
   @override
   State<_QrPaySheet> createState() => _QrPaySheetState();
@@ -1256,6 +1389,8 @@ class _QrPaySheetState extends State<_QrPaySheet> {
           'Method: $methodLabel',
           if (widget.coupon != null) 'Coupon: ${widget.coupon}',
         ].join(' · '),
+        dependentId: widget.child?.id,
+        dependentName: widget.child?.name,
       );
       if (mounted) {
         AppToast.success(context,

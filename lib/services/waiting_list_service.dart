@@ -53,6 +53,7 @@ class WaitingListService {
     required String className,
     List<String> allowedPlanNames = const [],
     DependentModel? attendee,
+    bool parentCreditsAllowed = true,
   }) async {
     final rules = await BookingService.creditRulesFor(attendee);
     final entry = WaitingListModel(
@@ -68,15 +69,19 @@ class WaitingListService {
       attendeeName: attendee?.name,
     );
     final entryRef = _col.doc();
-    await UserService.deductCreditAndWrite(userId, (tx, sourceEntryId) {
+    await UserService.deductCreditAndWrite(userId,
+        (tx, sourceEntryId, fromChild) {
       tx.set(entryRef, {
         ...entry.toFirestore(),
         'creditSourceEntryId': sourceEntryId,
+        if (fromChild) 'creditWallet': 'child',
       });
     },
         allowedPlanNames: allowedPlanNames,
         excludedPlanNames: rules.excluded,
-        preferredPlanNames: rules.preferred);
+        preferredPlanNames: rules.preferred,
+        childId: attendee?.id,
+        parentFallback: parentCreditsAllowed);
     unawaited(ConfigService.logActivityEvent(
       eventType: 'Joined Waitlist',
       classId: classId,
@@ -97,6 +102,7 @@ class WaitingListService {
     await UserService.refundCredit(
       userId,
       sourceEntryId: doc.data()?['creditSourceEntryId'] as String?,
+      childId: UserService.walletChildId(doc.data()),
     );
     final entry = WaitingListModel.fromFirestore(doc);
     unawaited(ConfigService.logActivityEvent(
@@ -272,10 +278,11 @@ class WaitingListService {
     await batch.commit();
     for (final doc in docs) {
       // Refund credit asynchronously
+      final data = doc.data() as Map<String, dynamic>?;
       unawaited(UserService.refundCredit(
         doc['userId'] as String,
-        sourceEntryId: (doc.data() as Map<String, dynamic>?)?['creditSourceEntryId']
-            as String?,
+        sourceEntryId: data?['creditSourceEntryId'] as String?,
+        childId: UserService.walletChildId(data),
       ));
       final entry = WaitingListModel.fromFirestore(doc);
       unawaited(ConfigService.logActivityEvent(

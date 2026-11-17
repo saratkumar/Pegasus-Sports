@@ -142,6 +142,11 @@ class UserService {
         'credits': invite?['initialCredits'] as int? ?? 0,
         'memberships': <Map<String, dynamic>>[],
         if (importedFrom != null) 'importedFrom': importedFrom,
+        // A child's own login: which child profile it belongs to (fixed by
+        // the invitation; firestore.rules check they match).
+        if (invite?['parentUid'] != null) 'parentUid': invite!['parentUid'],
+        if (invite?['dependentId'] != null)
+          'dependentId': invite!['dependentId'],
       });
       if (invite != null) batch.delete(inviteRef);
       await batch.commit();
@@ -340,22 +345,66 @@ class UserService {
   /// doc, so a later cancellation can refund it via [refundCredit].
   /// [allowedPlanNames]/[excludedPlanNames]/[preferredPlanNames] — see
   /// [deductCredit].
+  ///
+  /// [childId] (a child attending): the child's own junior packages
+  /// (users/{uid}/dependents/{childId}.memberships) are drawn from first.
+  /// Only if the child has no usable credit, and [parentFallback] allows it
+  /// (a parent booking for their child may spend their own credits; a
+  /// child booking for themselves may not), does it fall back to the
+  /// parent's wallet. [writeDoc]'s `fromChild` says which wallet paid, so
+  /// the doc can record `creditWallet: 'child'` for refunds (see
+  /// [walletChildId]).
   static Future<void> deductCreditAndWrite(
     String uid,
-    void Function(Transaction tx, String? sourceEntryId) writeDoc, {
+    void Function(Transaction tx, String? sourceEntryId, bool fromChild)
+        writeDoc, {
     List<String> allowedPlanNames = const [],
     Set<String> excludedPlanNames = const {},
     Set<String> preferredPlanNames = const {},
+    String? childId,
+    bool parentFallback = true,
   }) async {
     final userRef = _db.collection('users').doc(uid);
     await _db.runTransaction((tx) async {
+      if (childId != null) {
+        try {
+          final source = await _selectAndDeductWithinTx(
+              tx, walletRef(uid, childId: childId),
+              allowedPlanNames: allowedPlanNames);
+          writeDoc(tx, source, true);
+          return;
+        } on StateError {
+          // No usable junior credit — nothing was written; fall through.
+          if (!parentFallback) rethrow;
+        }
+      }
       final source = await _selectAndDeductWithinTx(tx, userRef,
           allowedPlanNames: allowedPlanNames,
           excludedPlanNames: excludedPlanNames,
           preferredPlanNames: preferredPlanNames);
-      writeDoc(tx, source);
+      writeDoc(tx, source, false);
     });
   }
+
+  /// The doc holding a wallet's `memberships`/`credits`: the account
+  /// holder's users/{uid}, or — with [childId] — that child's profile,
+  /// which holds the junior packages assigned to them.
+  static DocumentReference<Map<String, dynamic>> walletRef(String uid,
+          {String? childId}) =>
+      childId == null
+          ? _db.collection('users').doc(uid)
+          : _db
+              .collection('users')
+              .doc(uid)
+              .collection('dependents')
+              .doc(childId);
+
+  /// For a booking/waiting-list doc: the child whose wallet paid for it
+  /// (`creditWallet: 'child'`), or null if the account holder's did. Pass
+  /// it as [refundCredit]'s childId so the credit goes back where it came
+  /// from.
+  static String? walletChildId(Map<String, dynamic>? data) =>
+      data?['creditWallet'] == 'child' ? data!['attendeeId'] as String? : null;
 
   static bool _isEligiblePlan(
     MembershipEntry m,
@@ -523,11 +572,28 @@ class UserService {
   /// used to short-circuit the "no credits" UI message before attempting a
   /// booking. The transaction in [deductCredit] remains authoritative.
   /// [allowedPlanNames]/[excludedPlanNames] — see [deductCredit].
+  ///
+  /// [childId]/[parentFallback] — see [deductCreditAndWrite].
   static Future<bool> hasEnoughCredits(
     String uid, {
     List<String> allowedPlanNames = const [],
     Set<String> excludedPlanNames = const {},
+    String? childId,
+    bool parentFallback = true,
   }) async {
+    if (childId != null) {
+      final snap = await walletRef(uid, childId: childId).get();
+      final childPlans = _parseMemberships(snap.data() ?? {});
+      final now = DateTime.now();
+      final childHasCredit = childPlans.any((m) =>
+          _isEligiblePlan(m, allowedPlanNames) &&
+          m.creditsRemaining > 0 &&
+          ((m.isActive && m.endDate.isAfter(now)) || m.isQueued));
+      // A refund into an expired package lands in the child's own pool.
+      final childPool = snap.data()?['credits'] as int? ?? 0;
+      if (childHasCredit || childPool > 0) return true;
+      if (!parentFallback) return false;
+    }
     final user = await getUser(uid);
     if (user == null) return false;
     final now = DateTime.now();
@@ -552,12 +618,16 @@ class UserService {
   /// null (never drawn from a plan) or that plan has since expired (its
   /// credits were already forfeited per the no-carryover rule; reviving
   /// them would let an old plan's credit leak into a new period).
+  ///
+  /// [childId] (from [walletChildId]) refunds into that child's own junior
+  /// wallet instead of the account holder's.
   static Future<void> refundCredit(
     String uid, {
     required String? sourceEntryId,
     int amount = 1,
+    String? childId,
   }) async {
-    final userRef = _db.collection('users').doc(uid);
+    final userRef = walletRef(uid, childId: childId);
     await _db.runTransaction((tx) async {
       final snap = await tx.get(userRef);
       final data = snap.data();
@@ -594,8 +664,10 @@ class UserService {
     required String planName,
     required int credits,
     required int validityDays,
+    String? childId,
   }) async {
-    final userRef = _db.collection('users').doc(uid);
+    // A junior package goes onto the child it was bought for.
+    final userRef = walletRef(uid, childId: childId);
     await _db.runTransaction((tx) async {
       final snap = await tx.get(userRef);
       final memberships = _parseMemberships(snap.data() ?? {});
@@ -689,9 +761,10 @@ class UserService {
   /// copy of the list and this replaces the whole array with it.
   static Future<void> updateMemberships(
     String uid,
-    List<MembershipEntry> memberships,
-  ) async {
-    await _db.collection('users').doc(uid).update({
+    List<MembershipEntry> memberships, {
+    String? childId,
+  }) async {
+    await walletRef(uid, childId: childId).update({
       'memberships': memberships.map((m) => m.toMap()).toList(),
     });
   }

@@ -23,6 +23,14 @@ class QrPaymentRequestModel {
   final DateTime? resolvedAt;
   final String? resolvedBy;
   final String? paymentRef; // filled in by admin at approval time, optional
+  /// Junior package: the child it's for — approval puts the package on that
+  /// child (users/{userId}/dependents/{dependentId}). Null = adult plan.
+  final String? dependentId;
+  final String? dependentName;
+
+  /// Plan name with the child it's for, for admin lists and receipts.
+  String get planLabel =>
+      dependentName == null ? planName : '$planName (for $dependentName)';
 
   QrPaymentRequestModel({
     this.id,
@@ -40,6 +48,8 @@ class QrPaymentRequestModel {
     this.resolvedAt,
     this.resolvedBy,
     this.paymentRef,
+    this.dependentId,
+    this.dependentName,
   });
 
   factory QrPaymentRequestModel.fromFirestore(DocumentSnapshot doc) {
@@ -60,6 +70,8 @@ class QrPaymentRequestModel {
       resolvedAt: (data['resolvedAt'] as Timestamp?)?.toDate(),
       resolvedBy: data['resolvedBy'],
       paymentRef: data['paymentRef'],
+      dependentId: data['dependentId'] as String?,
+      dependentName: data['dependentName'] as String?,
     );
   }
 
@@ -78,5 +90,7 @@ class QrPaymentRequestModel {
         if (resolvedAt != null) 'resolvedAt': Timestamp.fromDate(resolvedAt!),
         if (resolvedBy != null) 'resolvedBy': resolvedBy,
         if (paymentRef != null) 'paymentRef': paymentRef,
+        if (dependentId != null) 'dependentId': dependentId,
+        if (dependentName != null) 'dependentName': dependentName,
       };
 }

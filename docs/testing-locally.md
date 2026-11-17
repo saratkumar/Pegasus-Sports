@@ -80,6 +80,19 @@ admin@test.com and add them under Users → Add User first.
   sign-in) with an "inactive" message. Tap Reactivate and they can sign in
   again with their credits and bookings intact. Use a second browser profile
   or an incognito window to be signed in as both at once.
+- **Junior package for one child:** as client@test.com, add two children in
+  My Family. As admin@test.com, approve both (Requests). Back as the parent,
+  buy a Kids plan with coupon **TESTFREE**: you're asked which child it's
+  for, and it shows under that child only. Booking that child uses their
+  package; booking yourself or the other child never touches it. Cancelling
+  puts the credit back on the same child.
+- **Child's own login:** in My Family, give a child a login email (e.g.
+  kid@test.com). Once the child is approved, an invitation appears in the
+  emulator's `mail` collection. Sign in with that email in an incognito
+  window: the child sees Classes, Bookings and My Plan only, books
+  themselves with their own junior credits, and can't buy anything. The
+  parent sees those bookings too. Removing the child in My Family signs
+  their login out.
 
 Credits are general credits: they work for any class that isn't restricted to
 specific plans.

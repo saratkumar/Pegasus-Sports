@@ -50,7 +50,7 @@ class _LoginScreenState extends State<LoginScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text(
-            'Please confirm you are 18 or older and agree to the Terms & Conditions.'),
+            'Please confirm you are 18 or older (or signing in to a junior account set up by your parent or guardian) and agree to the Terms & Conditions.'),
       ),
     );
     return false;
@@ -331,7 +331,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     color: AppColors.textSecondary, fontSize: 13, height: 1.4),
                 children: [
                   const TextSpan(
-                      text: 'I confirm I am 18 years or older and agree to the '),
+                      text: 'I confirm I am 18 years or older, or signing in to a junior account set up by my parent or guardian, and I agree to the '),
                   TextSpan(
                       text: 'Terms & Conditions',
                       style: linkStyle,

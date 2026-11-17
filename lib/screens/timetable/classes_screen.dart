@@ -23,7 +23,11 @@ import '../../widgets/guest_picker.dart';
 import '../../models/user_model.dart';
 
 class ClassesScreen extends StatefulWidget {
-  const ClassesScreen({super.key});
+  /// A child's own junior account ([UserModel.isJunior]): books only
+  /// themselves, under their parent's account, paying only with their own
+  /// junior credits — no attendee picker, no guests.
+  final UserModel? junior;
+  const ClassesScreen({super.key, this.junior});
 
   @override
   State<ClassesScreen> createState() => _ClassesScreenState();
@@ -39,9 +43,32 @@ class _ClassesScreenState extends State<ClassesScreen> {
   StreamSubscription<User?>? _authSub;
   StreamSubscription<List<DependentModel>>? _childrenSub;
 
+  StreamSubscription<DependentModel?>? _selfSub;
+
+  UserModel? get _junior =>
+      widget.junior?.isJunior == true ? widget.junior : null;
+
+  /// Whose account bookings go under: the signed-in member, or — for a
+  /// junior account — their parent's.
+  String get _ownerUid =>
+      _junior?.parentUid ?? FirebaseAuth.instance.currentUser!.uid;
+
+  /// A junior account's own child profile (live).
+  DependentModel? get _self => _junior == null || _children.isEmpty
+      ? null
+      : _children.first;
+
   @override
   void initState() {
     super.initState();
+    final junior = _junior;
+    if (junior != null) {
+      _selfSub = DependentService.streamOne(junior.parentUid!, junior.dependentId!)
+          .listen((c) {
+        if (mounted) setState(() => _children = c == null ? [] : [c]);
+      }, onError: (_) {});
+      return;
+    }
     _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
       _childrenSub?.cancel();
       _childrenSub = null;
@@ -62,18 +89,63 @@ class _ClassesScreenState extends State<ClassesScreen> {
   void dispose() {
     _authSub?.cancel();
     _childrenSub?.cancel();
+    _selfSub?.cancel();
     super.dispose();
   }
 
   /// Keys identifying everyone this account can book for on the selected
   /// date: '' for the account holder, plus each age-eligible child's id —
   /// matched against bookings' `attendeeId` (absent = account holder).
-  Set<String> get _familyKeys => {
-        '',
-        ..._children
-            .where((c) => c.isEligibleJuniorOn(_selectedDate))
-            .map((c) => c.id!),
-      };
+  Set<String> get _familyKeys => _junior != null
+      ? {if (_self != null) _self!.id!}
+      : {
+          '',
+          ..._children
+              .where((c) => c.isEligibleJuniorOn(_selectedDate))
+              .map((c) => c.id!),
+        };
+
+  /// Why a junior account can't book [cls]: no package at all, used up, or
+  /// a package that this class doesn't accept — each needs a different ask
+  /// of the parent.
+  String _juniorNoPackageText(DependentModel? child, ClassModel cls) {
+    final plans = [
+      ...?child?.activeMemberships,
+      ...?child?.queuedMemberships,
+    ];
+    if (plans.isEmpty) {
+      return "You don't have a junior package yet — ask your parent or guardian to buy one for you";
+    }
+    if (plans.every((m) => m.creditsRemaining <= 0)) {
+      return 'Your junior package has no credits left — ask your parent or guardian to buy a new one';
+    }
+    return "Your junior package doesn't cover ${cls.mode} — ask your parent or guardian";
+  }
+
+  /// Who gets the booking confirmation email: the booker, plus — when a
+  /// child attends — the parent and the child's own login, so both always
+  /// know what's booked.
+  Future<List<String>> _bookingEmails(DependentModel? child) async {
+    final emails = <String>{};
+    final me = FirebaseAuth.instance.currentUser?.email ?? '';
+    if (me.isNotEmpty) emails.add(me.toLowerCase());
+    if (child != null) {
+      if (child.hasLogin && child.loginEmail.isNotEmpty) {
+        emails.add(child.loginEmail.toLowerCase());
+      }
+      if (_junior != null) {
+        try {
+          final parent = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(_ownerUid)
+              .get();
+          final pe = parent.data()?['email']?.toString() ?? '';
+          if (pe.isNotEmpty) emails.add(pe.toLowerCase());
+        } catch (_) {}
+      }
+    }
+    return emails.toList();
+  }
 
   Future<AttendeeChoice?> _pickAttendee(
     BuildContext context, {
@@ -163,13 +235,20 @@ class _ClassesScreenState extends State<ClassesScreen> {
     // the single funnel every "Book"/"Book Now" path calls into.
     if (!await requireRealSignIn(context)) return;
     if (!context.mounted) return;
-    final uid = FirebaseAuth.instance.currentUser!.uid;
+    final uid = _ownerUid;
+    final isJunior = _junior != null;
 
-    final choice =
-        await _pickAttendee(context, action: 'booking', takenKeys: takenKeys);
-    if (choice == null || !context.mounted) return;
-    final child = choice.child;
-    final forLabel = child == null ? '' : ' for ${child.name}';
+    final DependentModel? child;
+    if (isJunior) {
+      child = _self;
+      if (child == null) return;
+    } else {
+      final choice = await _pickAttendee(context,
+          action: 'booking', takenKeys: takenKeys);
+      if (choice == null || !context.mounted) return;
+      child = choice.child;
+    }
+    final forLabel = child == null || isJunior ? '' : ' for ${child.name}';
 
     // Friends come along on the member's own credits — offered only when
     // the member attends and has a credit and a spot to spare.
@@ -190,10 +269,14 @@ class _ClassesScreenState extends State<ClassesScreen> {
       cls: cls,
       date: _selectedDate,
       targetUid: uid,
-      bookedByUid: uid,
-      bookedByRole: 'client',
-      targetUserName: FirebaseAuth.instance.currentUser?.displayName ?? uid,
+      bookedByUid: FirebaseAuth.instance.currentUser!.uid,
+      bookedByRole: isJunior ? 'junior' : 'client',
+      targetUserName: isJunior
+          ? (_junior!.name.isNotEmpty ? _junior!.name : uid)
+          : FirebaseAuth.instance.currentUser?.displayName ?? uid,
       attendee: child,
+      // A child booking themselves may only spend their own junior credits.
+      parentCreditsAllowed: !isJunior,
     );
 
     if (!result.success) {
@@ -208,12 +291,18 @@ class _ClassesScreenState extends State<ClassesScreen> {
               "${child?.name ?? 'This person'} must be ${DependentModel.minAge}–${DependentModel.maxAgeExclusive - 1} on the session date");
           break;
         case BookingFailureReason.planNotAllowed:
-          AppToast.error(context,
-              "Your current plan doesn't cover ${cls.mode} — purchase an eligible plan to book it");
+          AppToast.error(
+              context,
+              isJunior
+                  ? _juniorNoPackageText(child, cls)
+                  : "Your current plan doesn't cover ${cls.mode} — purchase an eligible plan to book it");
           break;
         case BookingFailureReason.noCredits:
           AppToast.error(
-              context, "No credits — purchase a membership plan first");
+              context,
+              isJunior
+                  ? _juniorNoPackageText(child, cls)
+                  : "No credits — purchase a membership plan first");
           break;
         case BookingFailureReason.classFull:
           AppToast.error(context, "Class is full");
@@ -237,17 +326,12 @@ class _ClassesScreenState extends State<ClassesScreen> {
       }
     }
 
-    final userDoc =
-        await FirebaseFirestore.instance.collection('users').doc(uid).get();
-    final email = FirebaseAuth.instance.currentUser?.email?.isNotEmpty == true
-        ? FirebaseAuth.instance.currentUser!.email!
-        : (userDoc.data()?['email']?.toString() ?? '');
-
-    if (email.isNotEmpty) {
+    final emailFor = child == null ? '' : ' for ${child.name}';
+    for (final email in await _bookingEmails(child)) {
       try {
         await EmailService.sendBookingEmail(
           email: email,
-          className: '${cls.mode}$forLabel$guestLabel',
+          className: '${cls.mode}$emailFor$guestLabel',
           classTime: cls.startTime,
           classDate: _selectedDate,
           location: cls.location,
@@ -339,13 +423,21 @@ class _ClassesScreenState extends State<ClassesScreen> {
   Future<void> _joinWaitingList(BuildContext context, ClassModel cls) async {
     if (!await requireRealSignIn(context)) return;
     if (!context.mounted) return;
-    final uid = FirebaseAuth.instance.currentUser!.uid;
+    final uid = _ownerUid;
     final classId = cls.effectiveId;
+    final isJunior = _junior != null;
 
-    final choice = await _pickAttendee(context, action: 'waiting list spot');
-    if (choice == null || !context.mounted) return;
-    final child = choice.child;
-    final forLabel = child == null ? '' : ' for ${child.name}';
+    final DependentModel? child;
+    if (isJunior) {
+      child = _self;
+      if (child == null) return;
+    } else {
+      final choice =
+          await _pickAttendee(context, action: 'waiting list spot');
+      if (choice == null || !context.mounted) return;
+      child = choice.child;
+    }
+    final forLabel = child == null || isJunior ? '' : ' for ${child.name}';
 
     // Check if already on waiting list
     final alreadyWaiting = await WaitingListService.isOnWaitingList(
@@ -361,10 +453,15 @@ class _ClassesScreenState extends State<ClassesScreen> {
 
     final rules = await BookingService.creditRulesFor(child);
     if (!await BookingService.canBookClass(cls, uid,
-        excludedPlanNames: rules.excluded)) {
+        excludedPlanNames: rules.excluded,
+        child: child,
+        parentFallback: !isJunior)) {
       if (context.mounted) {
-        AppToast.error(context,
-            "Your current plan doesn't cover ${cls.mode} — purchase an eligible plan to join the waiting list");
+        AppToast.error(
+            context,
+            isJunior
+                ? _juniorNoPackageText(child, cls)
+                : "Your current plan doesn't cover ${cls.mode} — purchase an eligible plan to join the waiting list");
       }
       return;
     }
@@ -384,7 +481,9 @@ class _ClassesScreenState extends State<ClassesScreen> {
     // Check credits
     final hasCredits = await UserService.hasEnoughCredits(uid,
         allowedPlanNames: cls.allowedPlanNames,
-        excludedPlanNames: rules.excluded);
+        excludedPlanNames: rules.excluded,
+        childId: child?.id,
+        parentFallback: !isJunior);
     if (!hasCredits) {
       if (context.mounted) {
         AppToast.error(context,
@@ -437,6 +536,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
       className: cls.mode,
       allowedPlanNames: cls.allowedPlanNames,
       attendee: child,
+      parentCreditsAllowed: !isJunior,
     );
 
     if (context.mounted) {
@@ -517,10 +617,13 @@ class _ClassesScreenState extends State<ClassesScreen> {
                       item: cls,
                       selectedDate: _selectedDate,
                       familyKeys: _familyKeys,
+                      ownerUid: _junior?.parentUid,
                       onBook: (ctx, taken) => _book(ctx, cls, taken),
                       onJoinWaitingList: (ctx) =>
                           _joinWaitingList(ctx, cls),
-                      onAddGuests: (ctx) => _addGuests(ctx, cls),
+                      onAddGuests: _junior != null
+                          ? null
+                          : (ctx) => _addGuests(ctx, cls),
                     );
                   },
                 );
@@ -712,14 +815,18 @@ class _ClassCard extends StatelessWidget {
   final ClassModel item;
   final DateTime selectedDate;
   final Set<String> familyKeys;
+  /// Whose bookings count as "mine" — null = the signed-in member.
+  final String? ownerUid;
   final Future<void> Function(BuildContext, Set<String> takenKeys) onBook;
   final Future<void> Function(BuildContext) onJoinWaitingList;
-  final Future<void> Function(BuildContext) onAddGuests;
+  /// Null hides "Bring a friend" (junior accounts can't bring guests).
+  final Future<void> Function(BuildContext)? onAddGuests;
 
   const _ClassCard({
     required this.item,
     required this.selectedDate,
     required this.familyKeys,
+    this.ownerUid,
     required this.onBook,
     required this.onJoinWaitingList,
     required this.onAddGuests,
@@ -803,6 +910,7 @@ class _ClassCard extends StatelessWidget {
                   groupSize: item.effectiveCapacity(selectedDate).toString(),
                   selectedDate: selectedDate,
                   familyKeys: familyKeys,
+                  ownerUid: ownerUid,
                   onBook: onBook,
                   onJoinWaitingList: onJoinWaitingList,
                   onAddGuests: onAddGuests,
@@ -879,15 +987,17 @@ class _CapacitySection extends StatefulWidget {
   final String groupSize;
   final DateTime selectedDate;
   final Set<String> familyKeys;
+  final String? ownerUid;
   final Future<void> Function(BuildContext, Set<String> takenKeys) onBook;
   final Future<void> Function(BuildContext) onJoinWaitingList;
-  final Future<void> Function(BuildContext) onAddGuests;
+  final Future<void> Function(BuildContext)? onAddGuests;
 
   const _CapacitySection({
     required this.classId,
     required this.groupSize,
     required this.selectedDate,
     required this.familyKeys,
+    this.ownerUid,
     required this.onBook,
     required this.onJoinWaitingList,
     required this.onAddGuests,
@@ -924,7 +1034,8 @@ class _CapacitySectionState extends State<_CapacitySection> {
           .snapshots(),
       builder: (context, snap) {
         final allDocs = snap.data?.docs ?? [];
-        final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+        final currentUid =
+            widget.ownerUid ?? FirebaseAuth.instance.currentUser?.uid ?? '';
         final todayDocs = allDocs.where((d) {
           final data = d.data() as Map<String, dynamic>;
           if (data['status'] == 'cancelled_by_trainer') return false;
@@ -1093,11 +1204,13 @@ class _CapacitySectionState extends State<_CapacitySection> {
                       style: const TextStyle(
                           fontSize: 12, color: AppColors.textSecondary)),
                 ],
-                if (takenKeys.contains('') && !isFull)
+                if (widget.onAddGuests != null &&
+                    takenKeys.contains('') &&
+                    !isFull)
                   SizedBox(
                     width: double.infinity,
                     child: TextButton.icon(
-                      onPressed: () => widget.onAddGuests(context),
+                      onPressed: () => widget.onAddGuests!(context),
                       icon: const Icon(Icons.person_add_alt_1, size: 18),
                       label: const Text('Bring a friend'),
                     ),

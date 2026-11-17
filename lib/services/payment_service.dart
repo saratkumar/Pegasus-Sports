@@ -59,6 +59,7 @@ class PaymentService {
     required String currency,
     required String cardRegion,
     required String cardBrand,
+    String? dependentId,
   }) async {
     // The PaymentSheet below is mobile-only (flutter_stripe has no web
     // implementation of it) — the web shop pays via Stripe Checkout.
@@ -68,7 +69,8 @@ class PaymentService {
           netAmount: netAmount,
           currency: currency,
           cardRegion: cardRegion,
-          cardBrand: cardBrand);
+          cardBrand: cardBrand,
+          dependentId: dependentId);
     }
     // Breadcrumbs, not error reports — the known failure mode here (see
     // memberships_screen.dart's _confirm()) is the Stripe sheet silently
@@ -87,6 +89,8 @@ class PaymentService {
           'planName': planName,
           'cardRegion': cardRegion,
           'cardBrand': cardBrand,
+          // Junior package: the child it's for (validated server-side).
+          if (dependentId != null) 'dependentId': dependentId,
         })
         .timeout(const Duration(seconds: 20),
             onTimeout: () => throw TimeoutException(
@@ -195,6 +199,7 @@ class PaymentService {
     required String currency,
     required String cardRegion,
     required String cardBrand,
+    String? dependentId,
   }) async {
     final result = await _functions
         .httpsCallable('createCheckoutSession')
@@ -204,6 +209,7 @@ class PaymentService {
           'planName': planName,
           'cardRegion': cardRegion,
           'cardBrand': cardBrand,
+          if (dependentId != null) 'dependentId': dependentId,
         })
         .timeout(const Duration(seconds: 20),
             onTimeout: () => throw TimeoutException(
@@ -272,12 +278,14 @@ class PaymentService {
     required int credits,
     required int validityDays,
     required String couponCode,
+    String? dependentId,
   }) async {
     await _functions.httpsCallable('redeemFreeMembership').call({
       'planName': planName,
       'credits': credits,
       'validityDays': validityDays,
       'couponCode': couponCode,
+      if (dependentId != null) 'dependentId': dependentId,
     });
   }
 }

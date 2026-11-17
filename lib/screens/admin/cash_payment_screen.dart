@@ -2,8 +2,10 @@ import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
+import '../../models/dependent_model.dart';
 import '../../models/membership_plan_model.dart';
 import '../../models/user_model.dart';
+import '../../services/dependent_service.dart';
 import '../../services/invoice_service.dart';
 import '../../services/membership_plan_service.dart';
 import '../../services/user_service.dart';
@@ -29,6 +31,11 @@ class _CashPaymentScreenState extends State<CashPaymentScreen> {
 
   UserModel? _selectedClient;
   MembershipPlanModel? _selectedPlan;
+  // Junior package: the client's approved children aged 6–17, and the one
+  // the package is for. It goes onto that child; the parent is still the
+  // payer on the invoice.
+  List<DependentModel> _juniorChildren = [];
+  DependentModel? _selectedChild;
   late final TextEditingController _amount;
   late final TextEditingController _credits;
   late final TextEditingController _invoiceNumber;
@@ -125,6 +132,31 @@ class _CashPaymentScreenState extends State<CashPaymentScreen> {
         _credits.text = plan.credits.toString();
       }
     });
+    _loadJuniorChildren();
+  }
+
+  void _onClientSelected(UserModel? client) {
+    setState(() => _selectedClient = client);
+    _loadJuniorChildren();
+  }
+
+  Future<void> _loadJuniorChildren() async {
+    final client = _selectedClient;
+    if (client == null || _selectedPlan?.isJunior != true) {
+      setState(() {
+        _juniorChildren = [];
+        _selectedChild = null;
+      });
+      return;
+    }
+    final kids = (await DependentService.getActive(client.uid))
+        .where((c) => c.isVerified && c.isEligibleJuniorOn())
+        .toList();
+    if (!mounted || _selectedClient?.uid != client.uid) return;
+    setState(() {
+      _juniorChildren = kids;
+      _selectedChild = kids.length == 1 ? kids.single : null;
+    });
   }
 
   Future<void> _submit() async {
@@ -144,6 +176,17 @@ class _CashPaymentScreenState extends State<CashPaymentScreen> {
       AppToast.error(context, 'Enter a valid credit amount');
       return;
     }
+    final child = plan.isJunior ? _selectedChild : null;
+    if (plan.isJunior && child == null) {
+      AppToast.error(
+          context,
+          _juniorChildren.isEmpty
+              ? '${client.name} has no approved child aged 6–17 for a junior package'
+              : 'Select which child this junior package is for');
+      return;
+    }
+    final planLabel =
+        child == null ? plan.name : '${plan.name} (for ${child.name})';
 
     setState(() => _saving = true);
     try {
@@ -152,6 +195,7 @@ class _CashPaymentScreenState extends State<CashPaymentScreen> {
         planName: plan.name,
         credits: credits,
         validityDays: plan.validityDays,
+        childId: child?.id,
       );
 
       final txRef = FirebaseFirestore.instance.collection('transactions').doc();
@@ -176,6 +220,8 @@ class _CashPaymentScreenState extends State<CashPaymentScreen> {
         'clientName': client.name,
         'clientEmail': client.email,
         'planName': plan.name,
+        if (child != null) 'dependentId': child.id,
+        if (child != null) 'dependentName': child.name,
         'credits': credits,
         'amount': amount,
         'currency': 'SGD',
@@ -192,7 +238,7 @@ class _CashPaymentScreenState extends State<CashPaymentScreen> {
         paymentIntentId: internalRef,
         clientName: client.name,
         clientEmail: client.email,
-        planName: plan.name,
+        planName: planLabel,
         credits: credits,
         amount: amount,
         currency: 'SGD',
@@ -215,12 +261,14 @@ class _CashPaymentScreenState extends State<CashPaymentScreen> {
         AppToast.success(
           context,
           emailSent
-              ? '${plan.name} activated for ${client.name} (+$credits credits) — invoice emailed'
-              : '${plan.name} activated for ${client.name} (+$credits credits) — invoice email failed, check Transaction History',
+              ? '$planLabel activated for ${client.name} (+$credits credits) — invoice emailed'
+              : '$planLabel activated for ${client.name} (+$credits credits) — invoice email failed, check Transaction History',
         );
         setState(() {
           _selectedClient = null;
           _selectedPlan = null;
+          _juniorChildren = [];
+          _selectedChild = null;
           _amount.clear();
           _credits.clear();
           _invoiceNumber.clear();
@@ -273,7 +321,7 @@ class _CashPaymentScreenState extends State<CashPaymentScreen> {
                                 overflow: TextOverflow.ellipsis),
                           ))
                       .toList(),
-                  onChanged: (v) => setState(() => _selectedClient = v),
+                  onChanged: _onClientSelected,
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<MembershipPlanModel>(
@@ -294,6 +342,37 @@ class _CashPaymentScreenState extends State<CashPaymentScreen> {
                       .toList(),
                   onChanged: _onPlanSelected,
                 ),
+                if (_selectedPlan?.isJunior == true &&
+                    _selectedClient != null) ...[
+                  const SizedBox(height: 12),
+                  if (_juniorChildren.isEmpty)
+                    const Text(
+                      'This client has no approved child aged 6–17. Approve '
+                      'their child profile first, then record the payment.',
+                      style: TextStyle(fontSize: 13, color: AppColors.error),
+                    )
+                  else
+                    DropdownButtonFormField<DependentModel>(
+                      key: ValueKey('child-${_selectedClient!.uid}'),
+                      initialValue: _selectedChild,
+                      isExpanded: true,
+                      decoration: InputDecoration(
+                        labelText: 'For which child',
+                        helperText: 'Only this child can use the credits',
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10)),
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 12),
+                      ),
+                      items: _juniorChildren
+                          .map((c) => DropdownMenuItem(
+                                value: c,
+                                child: Text('${c.name} (age ${c.ageOn()})'),
+                              ))
+                          .toList(),
+                      onChanged: (c) => setState(() => _selectedChild = c),
+                    ),
+                ],
                 const SizedBox(height: 12),
                 Row(children: [
                   Expanded(

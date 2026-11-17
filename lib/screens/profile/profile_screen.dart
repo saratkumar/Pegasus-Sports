@@ -31,7 +31,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _phoneCtrl = TextEditingController(text: widget.userModel.phone ?? '');
     _coachPhotoCtrl =
         TextEditingController(text: widget.userModel.coachPhotoUrl ?? '');
-    _coachBioCtrl = TextEditingController(text: widget.userModel.coachBio ?? '');
+    _coachBioCtrl =
+        TextEditingController(text: widget.userModel.coachBio ?? '');
   }
 
   @override
@@ -98,8 +99,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
               controller: _nameCtrl,
               decoration: InputDecoration(
                 labelText: 'Name',
-                prefixIcon:
-                    const Icon(Icons.person_outline, color: AppColors.textMuted),
+                prefixIcon: const Icon(Icons.person_outline,
+                    color: AppColors.textMuted),
                 border:
                     OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
                 contentPadding:
@@ -115,8 +116,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
               decoration: InputDecoration(
                 labelText: 'Mobile number',
                 hintText: 'e.g. +65 9123 4567',
-                prefixIcon:
-                    const Icon(Icons.phone_outlined, color: AppColors.textMuted),
+                prefixIcon: const Icon(Icons.phone_outlined,
+                    color: AppColors.textMuted),
                 border:
                     OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
                 contentPadding:
@@ -135,8 +136,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
               enabled: false,
               decoration: InputDecoration(
                 labelText: 'Email',
-                prefixIcon:
-                    const Icon(Icons.email_outlined, color: AppColors.textMuted),
+                prefixIcon: const Icon(Icons.email_outlined,
+                    color: AppColors.textMuted),
                 border:
                     OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
                 contentPadding:
@@ -182,31 +183,35 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   : const Text('Save Changes',
                       style: TextStyle(fontWeight: FontWeight.w700)),
             ),
-            const SizedBox(height: 28),
-            Card(
-              color: AppColors.card,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-                side: const BorderSide(color: AppColors.divider),
-              ),
-              child: ListTile(
-                leading: const Icon(Icons.family_restroom,
-                    color: AppColors.primary),
-                title: const Text('My Family',
-                    style: TextStyle(fontWeight: FontWeight.w600)),
-                subtitle: const Text('Add children (6–17) and book for them',
-                    style: TextStyle(fontSize: 12)),
-                trailing: const Icon(Icons.chevron_right,
-                    color: AppColors.textMuted),
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) =>
-                        FamilyScreen(parentUid: widget.userModel.uid),
+            // Junior accounts are a child's own login — no family of
+            // their own to manage.
+            if (!widget.userModel.isJunior) ...[
+              const SizedBox(height: 28),
+              Card(
+                color: AppColors.card,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  side: const BorderSide(color: AppColors.divider),
+                ),
+                child: ListTile(
+                  leading: const Icon(Icons.family_restroom,
+                      color: AppColors.primary),
+                  title: const Text('My Family',
+                      style: TextStyle(fontWeight: FontWeight.w600)),
+                  subtitle: const Text('Add children (6–17) and book for them',
+                      style: TextStyle(fontSize: 12)),
+                  trailing: const Icon(Icons.chevron_right,
+                      color: AppColors.textMuted),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          FamilyScreen(parentUid: widget.userModel.uid),
+                    ),
                   ),
                 ),
               ),
-            ),
+            ],
           ],
         ),
       ),

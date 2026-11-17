@@ -1,6 +1,7 @@
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const admin = require("firebase-admin");
+const { Timestamp } = require("firebase-admin/firestore");
 const { buildRenewalReminderEmail } = require("./emailTemplates");
 
 const REMINDER_WINDOW_DAYS = 14;
@@ -24,13 +25,19 @@ exports.dailyMembershipRollover = onSchedule(
   async () => {
     const db = admin.firestore();
     const now = Date.now();
-    const usersSnap = await db.collection("users").get();
+    // Adults' plans live on users/{uid}; junior packages on the child they
+    // were bought for (users/{uid}/dependents/{childId}) — same shape, same
+    // rollover.
+    const [usersSnap, childrenSnap] = await Promise.all([
+      db.collection("users").get(),
+      db.collectionGroup("dependents").get(),
+    ]);
 
     let batch = db.batch();
     let opsInBatch = 0;
     const commits = [];
 
-    for (const doc of usersSnap.docs) {
+    for (const doc of [...usersSnap.docs, ...childrenSnap.docs]) {
       const memberships = doc.data().memberships;
       if (!Array.isArray(memberships) || memberships.length === 0) continue;
 
@@ -89,7 +96,11 @@ exports.dailyMembershipRollover = onSchedule(
 // plan the user holds (empty array if they have no active plan at all).
 // `reason` is null on success, otherwise one of: already-queued,
 // already-sent, outside-window, no-email.
-async function sendRenewalReminderForUser(db, userRef, userData, { requireWindow }) {
+//
+// For a junior package, userRef is the child's profile (which holds the
+// package) while userData carries the PARENT's email/name — the parent pays,
+// so the parent gets the reminder — and forChild names the child in it.
+async function sendRenewalReminderForUser(db, userRef, userData, { requireWindow, forChild }) {
   const memberships = userData.memberships;
   if (!Array.isArray(memberships)) return { results: [] };
 
@@ -131,13 +142,13 @@ async function sendRenewalReminderForUser(db, userRef, userData, { requireWindow
         if (idx === -1) continue;
         if (requireWindow && updated[idx].reminderSentAt) continue; // lost a race
 
-        updated[idx] = { ...updated[idx], reminderSentAt: admin.firestore.Timestamp.now() };
+        updated[idx] = { ...updated[idx], reminderSentAt: Timestamp.now() };
         tx.set(
           db.collection("mail").doc(),
           buildRenewalReminderEmail({
             to: email,
             name: userData.name || "there",
-            planName: active.planName,
+            planName: forChild ? `${active.planName} (for ${forChild})` : active.planName,
             endDate: active.endDate.toDate(),
             creditsRemaining: active.creditsRemaining || 0,
             daysLeft: Math.max(daysLeft, 0),
@@ -170,10 +181,27 @@ exports.dailyRenewalReminders = onSchedule(
     const db = admin.firestore();
     const usersSnap = await db.collection("users").get();
 
+    const parents = new Map();
     for (const doc of usersSnap.docs) {
+      parents.set(doc.id, doc);
       // Deactivated accounts can't sign in to renew — don't email them.
       if (doc.get("isActive") === false) continue;
       await sendRenewalReminderForUser(db, doc.ref, doc.data(), { requireWindow: true });
+    }
+
+    // Junior packages: reminder to the parent, naming the child.
+    const childrenSnap = await db.collectionGroup("dependents").get();
+    for (const child of childrenSnap.docs) {
+      const memberships = child.get("memberships");
+      if (!Array.isArray(memberships) || memberships.length === 0) continue;
+      if (child.get("isActive") === false) continue;
+      const parent = parents.get(child.ref.parent.parent.id);
+      if (!parent || parent.get("isActive") === false) continue;
+      await sendRenewalReminderForUser(db, child.ref, {
+        memberships,
+        email: parent.get("email"),
+        name: parent.get("name"),
+      }, { requireWindow: true, forChild: child.get("name") || "your child" });
     }
   }
 );

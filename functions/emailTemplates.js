@@ -115,7 +115,9 @@ function buildInvitationEmail({ to, name, role }) {
     ? "You've been added as a <strong>trainer</strong>, so you'll see your classes and rosters once you sign in."
     : role === "admin"
       ? "You've been added as an <strong>admin</strong>, so you'll have access to the admin tools once you sign in."
-      : "Once you sign in you can view the timetable, buy a membership and book classes.";
+      : role === "junior"
+        ? "Your parent or guardian has set up a <strong>junior account</strong> for you. Once you sign in you can see your junior package and book classes for yourself."
+        : "Once you sign in you can view the timetable, buy a membership and book classes.";
 
   const storeButtons = [
     PLAY_STORE_URL && button(PLAY_STORE_URL, "Get it on Google Play"),

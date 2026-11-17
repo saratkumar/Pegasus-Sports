@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../../models/user_model.dart';
 import '../../models/waiting_list_model.dart';
 import '../../services/booking_service.dart';
 import '../../services/config_service.dart';
@@ -13,7 +14,11 @@ import '../../utils/time_utils.dart';
 import '../../widgets/timeline_range_selector.dart';
 
 class BookingsScreen extends StatefulWidget {
-  const BookingsScreen({super.key});
+  /// A child's own junior account: shows only that child's bookings, which
+  /// live under the parent's account (`userId` = parent, `attendeeId` =
+  /// child). No History tab — the activity log is the parent's.
+  final UserModel? junior;
+  const BookingsScreen({super.key, this.junior});
 
   @override
   State<BookingsScreen> createState() => _BookingsScreenState();
@@ -23,10 +28,13 @@ class _BookingsScreenState extends State<BookingsScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tab;
 
+  UserModel? get _junior =>
+      widget.junior?.isJunior == true ? widget.junior : null;
+
   @override
   void initState() {
     super.initState();
-    _tab = TabController(length: 3, vsync: this);
+    _tab = TabController(length: _junior != null ? 2 : 3, vsync: this);
   }
 
   @override
@@ -45,19 +53,21 @@ class _BookingsScreenState extends State<BookingsScreen>
           indicatorColor: AppColors.primary,
           labelColor: AppColors.textPrimary,
           unselectedLabelColor: AppColors.textMuted,
-          tabs: const [
-            Tab(text: 'Bookings'),
-            Tab(text: 'Waiting List'),
-            Tab(text: 'History'),
+          tabs: [
+            const Tab(text: 'Bookings'),
+            const Tab(text: 'Waiting List'),
+            if (_junior == null) const Tab(text: 'History'),
           ],
         ),
       ),
       body: TabBarView(
         controller: _tab,
         children: [
-          _BookingsTab(),
-          _WaitingListTab(),
-          const _HistoryTab(),
+          _BookingsTab(
+              ownerUid: _junior?.parentUid, attendeeId: _junior?.dependentId),
+          _WaitingListTab(
+              ownerUid: _junior?.parentUid, attendeeId: _junior?.dependentId),
+          if (_junior == null) const _HistoryTab(),
         ],
       ),
     );
@@ -67,6 +77,12 @@ class _BookingsScreenState extends State<BookingsScreen>
 // ── Bookings tab ─────────────────────────────────────────────────────────────
 
 class _BookingsTab extends StatelessWidget {
+  /// Junior mode: the parent's uid and the child's id — only that child's
+  /// bookings are shown. Null = the signed-in member's own bookings.
+  final String? ownerUid;
+  final String? attendeeId;
+  const _BookingsTab({this.ownerUid, this.attendeeId});
+
   Future<void> _cancel(BuildContext context, String id,
       Map<String, dynamic> data) async {
     final bd = data['bookingDate'];
@@ -110,7 +126,9 @@ class _BookingsTab extends StatelessWidget {
     );
     if (ok != true) return;
 
-    final uid = FirebaseAuth.instance.currentUser!.uid;
+    // The booking's own account (a junior's bookings are under the parent).
+    final uid = data['userId'] as String? ??
+        FirebaseAuth.instance.currentUser!.uid;
     final creditsUsed = (data['creditsUsed'] as int?) ?? 1;
     final sourceEntryId = data['creditSourceEntryId'] as String?;
 
@@ -119,7 +137,9 @@ class _BookingsTab extends StatelessWidget {
     // Refund credit
     if (creditsUsed > 0) {
       await UserService.refundCredit(uid,
-          sourceEntryId: sourceEntryId, amount: creditsUsed);
+          sourceEntryId: sourceEntryId,
+          amount: creditsUsed,
+          childId: UserService.walletChildId(data));
     }
 
     // Try to admit next person from waiting list
@@ -181,7 +201,7 @@ class _BookingsTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final uid = FirebaseAuth.instance.currentUser!.uid;
+    final uid = ownerUid ?? FirebaseAuth.instance.currentUser!.uid;
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('bookings')
@@ -193,12 +213,12 @@ class _BookingsTab extends StatelessWidget {
               child: CircularProgressIndicator(color: AppColors.primary));
         }
         final docs = snapshot.data?.docs ?? [];
-        // Exclude cancelled bookings
-        final active = docs
-            .where((d) =>
-                (d.data() as Map<String, dynamic>)['status'] !=
-                'cancelled_by_trainer')
-            .toList();
+        // Exclude cancelled bookings (and, for a junior, anyone else's).
+        final active = docs.where((d) {
+          final data = d.data() as Map<String, dynamic>;
+          if (data['status'] == 'cancelled_by_trainer') return false;
+          return attendeeId == null || data['attendeeId'] == attendeeId;
+        }).toList();
 
         if (active.isEmpty) return _empty();
 
@@ -420,9 +440,13 @@ class _BookingsTab extends StatelessWidget {
 // ── Waiting list tab ─────────────────────────────────────────────────────────
 
 class _WaitingListTab extends StatelessWidget {
+  final String? ownerUid;
+  final String? attendeeId;
+  const _WaitingListTab({this.ownerUid, this.attendeeId});
+
   @override
   Widget build(BuildContext context) {
-    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final uid = ownerUid ?? FirebaseAuth.instance.currentUser?.uid ?? '';
     return StreamBuilder<List<WaitingListModel>>(
       stream: WaitingListService.userWaitingListStream(uid),
       builder: (context, snap) {
@@ -430,7 +454,9 @@ class _WaitingListTab extends StatelessWidget {
           return const Center(
               child: CircularProgressIndicator(color: AppColors.primary));
         }
-        final entries = snap.data ?? [];
+        final entries = (snap.data ?? [])
+            .where((e) => attendeeId == null || e.attendeeId == attendeeId)
+            .toList();
         if (entries.isEmpty) {
           return Center(
             child: Column(
@@ -512,8 +538,8 @@ class _WaitingCard extends StatelessWidget {
     );
     if (ok != true) return;
 
-    final uid = FirebaseAuth.instance.currentUser!.uid;
-    await WaitingListService.leaveWaitingList(entry.id!, uid);
+    // The entry's own account (a junior's entries are under the parent).
+    await WaitingListService.leaveWaitingList(entry.id!, entry.userId);
 
     if (context.mounted) {
       AppToast.info(context, "Removed from waiting list · credit refunded");

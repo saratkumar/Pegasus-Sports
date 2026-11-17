@@ -25,6 +25,11 @@ class DependentService {
   static Future<List<DependentModel>> getActive(String parentUid) =>
       streamActive(parentUid).first;
 
+  /// One child profile, live — a junior account's view of itself.
+  static Stream<DependentModel?> streamOne(String parentUid, String childId) =>
+      _col(parentUid).doc(childId).snapshots().map(
+          (d) => d.exists ? DependentModel.fromFirestore(d) : null);
+
   /// A parent's new child starts 'pending' — the onDependentCreated Cloud
   /// Function then files a Child Verification request for admins. A child
   /// added by staff ([addedByStaff]) is approved on the spot.

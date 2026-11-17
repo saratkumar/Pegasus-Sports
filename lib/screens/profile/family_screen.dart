@@ -3,6 +3,7 @@ import '../../models/dependent_model.dart';
 import '../../services/dependent_service.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/app_toast.dart';
+import '../../widgets/junior_plans.dart';
 
 /// "My Family" — a parent's child profiles (aged 6–17). Children never sign
 /// in; the parent books for them from the Classes screen. [staffMode] is
@@ -54,9 +55,10 @@ class FamilyScreen extends StatelessWidget {
             children: [
               const Text(
                 'Add your children (aged ${DependentModel.minAge}–17) to book '
-                'classes for them using your account. Juniors can join any '
-                'class and can use your credits. Our staff approve each new '
-                'child before junior packages can be bought or used for them.',
+                'classes for them using your account — with your own credits, '
+                'or with a junior package. Our staff approve each new child '
+                'first. A junior package is bought for one child, and only '
+                'that child can use its credits.',
                 style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
               ),
               const SizedBox(height: 16),
@@ -86,31 +88,49 @@ class FamilyScreen extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
         side: const BorderSide(color: AppColors.divider),
       ),
-      child: ListTile(
-        onTap: () => _openEditor(context, c),
-        leading: CircleAvatar(
-          backgroundColor: AppColors.primary.withValues(alpha: 0.12),
-          child: const Icon(Icons.child_care, color: AppColors.primary),
+      child: Column(children: [
+        ListTile(
+          onTap: () => _openEditor(context, c),
+          leading: CircleAvatar(
+            backgroundColor: AppColors.primary.withValues(alpha: 0.12),
+            child: const Icon(Icons.child_care, color: AppColors.primary),
+          ),
+          title:
+              Text(c.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+          subtitle: Text(
+            eligible
+                ? 'Age $age · ${c.verificationLabel}'
+                    '${c.hasMedicalNotes ? ' · Medical notes added' : ''}'
+                : age >= DependentModel.maxAgeExclusive
+                    ? 'Age $age — now an adult, please create their own account'
+                    : 'Age $age — can book from age ${DependentModel.minAge}',
+            style: TextStyle(
+                fontSize: 12,
+                color: !eligible || c.isRejected
+                    ? AppColors.error
+                    : c.isVerified
+                        ? AppColors.textSecondary
+                        : const Color(0xFFE08A00)),
+          ),
+          trailing: const Icon(Icons.chevron_right, color: AppColors.textMuted),
         ),
-        title: Text(c.name,
-            style: const TextStyle(fontWeight: FontWeight.w600)),
-        subtitle: Text(
-          eligible
-              ? 'Age $age · ${c.verificationLabel}'
-                  '${c.hasMedicalNotes ? ' · Medical notes added' : ''}'
-              : age >= DependentModel.maxAgeExclusive
-                  ? 'Age $age — now an adult, please create their own account'
-                  : 'Age $age — can book from age ${DependentModel.minAge}',
-          style: TextStyle(
-              fontSize: 12,
-              color: !eligible || c.isRejected
-                  ? AppColors.error
-                  : c.isVerified
-                      ? AppColors.textSecondary
-                      : const Color(0xFFE08A00)),
-        ),
-        trailing: const Icon(Icons.chevron_right, color: AppColors.textMuted),
-      ),
+        if (c.memberships.isNotEmpty || (staffMode && c.isVerified))
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Junior packages',
+                    style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textSecondary)),
+                JuniorPlansSection(
+                    parentUid: parentUid, child: c, editable: staffMode),
+              ],
+            ),
+          ),
+      ]),
     );
   }
 }
@@ -135,6 +155,7 @@ class _ChildEditorScreenState extends State<_ChildEditorScreen> {
   late final TextEditingController _emergencyName;
   late final TextEditingController _emergencyPhone;
   late final TextEditingController _medical;
+  late final TextEditingController _loginEmail;
   DateTime? _dob;
   late String _relationship;
   bool _consent = false;
@@ -157,6 +178,7 @@ class _ChildEditorScreenState extends State<_ChildEditorScreen> {
     _emergencyPhone =
         TextEditingController(text: e?.emergencyContactPhone ?? '');
     _medical = TextEditingController(text: e?.medicalNotes ?? '');
+    _loginEmail = TextEditingController(text: e?.loginEmail ?? '');
     _dob = e?.dateOfBirth;
     _relationship = e?.relationship ?? 'Parent';
     // Consent was recorded when the child was added.
@@ -169,6 +191,7 @@ class _ChildEditorScreenState extends State<_ChildEditorScreen> {
     _emergencyName.dispose();
     _emergencyPhone.dispose();
     _medical.dispose();
+    _loginEmail.dispose();
     super.dispose();
   }
 
@@ -213,9 +236,10 @@ class _ChildEditorScreenState extends State<_ChildEditorScreen> {
       emergencyContactName: _emergencyName.text.trim(),
       emergencyContactPhone: _emergencyPhone.text.trim(),
       medicalNotes: _medical.text.trim(),
+      loginEmail: _loginEmail.text.trim(),
       consentAcceptedAt: widget.existing?.consentAcceptedAt ?? DateTime.now(),
-      consentTermsVersion: widget.existing?.consentTermsVersion ??
-          DependentModel.consentVersion,
+      consentTermsVersion:
+          widget.existing?.consentTermsVersion ?? DependentModel.consentVersion,
     );
     try {
       if (_isEdit) {
@@ -254,8 +278,8 @@ class _ChildEditorScreenState extends State<_ChildEditorScreen> {
               child: const Text('Cancel')),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Remove',
-                style: TextStyle(color: AppColors.error)),
+            child:
+                const Text('Remove', style: TextStyle(color: AppColors.error)),
           ),
         ],
       ),
@@ -336,6 +360,26 @@ class _ChildEditorScreenState extends State<_ChildEditorScreen> {
             const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       );
 
+  /// Where the child's own login stands, under the email field.
+  Widget _loginStatus(DependentModel c) {
+    String? text;
+    var color = AppColors.textMuted;
+    if (c.loginEmail.isEmpty) {
+      return const SizedBox.shrink();
+    } else if (c.hasLogin) {
+      text = 'Signed in — ${c.name} has their own login.';
+      color = AppColors.success;
+    } else if (!c.isVerified) {
+      text = 'The invitation is sent once our staff approve ${c.name}.';
+    } else {
+      text = 'Invitation sent — ${c.name} can sign in with this email.';
+    }
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Text(text, style: TextStyle(fontSize: 12, color: color)),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -361,7 +405,8 @@ class _ChildEditorScreenState extends State<_ChildEditorScreen> {
               controller: _name,
               enabled: !_identityLocked,
               textCapitalization: TextCapitalization.words,
-              decoration: _decoration('Child\'s full name', Icons.person_outline),
+              decoration:
+                  _decoration('Child\'s full name', Icons.person_outline),
               validator: (v) =>
                   (v == null || v.trim().isEmpty) ? 'Name is required' : null,
             ),
@@ -370,8 +415,7 @@ class _ChildEditorScreenState extends State<_ChildEditorScreen> {
               onTap: _identityLocked ? null : _pickDob,
               borderRadius: BorderRadius.circular(10),
               child: InputDecorator(
-                decoration:
-                    _decoration('Date of birth', Icons.cake_outlined),
+                decoration: _decoration('Date of birth', Icons.cake_outlined),
                 child: Text(
                   _dob == null
                       ? 'Select (age ${DependentModel.minAge}–17)'
@@ -406,7 +450,8 @@ class _ChildEditorScreenState extends State<_ChildEditorScreen> {
             TextFormField(
               controller: _emergencyName,
               textCapitalization: TextCapitalization.words,
-              decoration: _decoration('Contact name', Icons.contact_phone_outlined),
+              decoration:
+                  _decoration('Contact name', Icons.contact_phone_outlined),
               validator: (v) => (v == null || v.trim().isEmpty)
                   ? 'Emergency contact is required'
                   : null,
@@ -441,6 +486,37 @@ class _ChildEditorScreenState extends State<_ChildEditorScreen> {
                     OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
               ),
             ),
+            const SizedBox(height: 20),
+            const Text("Child's own login (optional)",
+                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+            const SizedBox(height: 4),
+            const Text(
+                'Give your child their own sign-in so they can see their '
+                'junior package and book classes for themselves. Once our '
+                'staff approve them, we email an invitation to this address. '
+                'They can only use their own junior credits and can\'t make '
+                'payments. Leave blank to keep booking for them yourself.',
+                style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _loginEmail,
+              keyboardType: TextInputType.emailAddress,
+              autocorrect: false,
+              decoration: InputDecoration(
+                labelText: "Child's email",
+                hintText: 'e.g. their Gmail address',
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              validator: (v) {
+                final t = (v ?? '').trim();
+                if (t.isEmpty) return null;
+                return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(t)
+                    ? null
+                    : 'Enter a valid email, or leave it blank';
+              },
+            ),
+            if (widget.existing != null) _loginStatus(widget.existing!),
             const SizedBox(height: 20),
             if (!_isEdit)
               CheckboxListTile(

@@ -351,7 +351,7 @@ class _QrPaymentCardState extends State<_QrPaymentCard> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-                '${widget.req.userName} · ${widget.req.planName} · '
+                '${widget.req.userName} · ${widget.req.planLabel} · '
                 '${widget.req.currency} ${widget.req.amount.toStringAsFixed(2)}',
                 style: const TextStyle(color: AppColors.textSecondary)),
             const SizedBox(height: 14),
@@ -464,7 +464,7 @@ class _QrPaymentCardState extends State<_QrPaymentCard> {
           Row(
             children: [
               Expanded(
-                child: Text(req.planName,
+                child: Text(req.planLabel,
                     style: const TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w700,
@@ -875,6 +875,8 @@ class _RequestCardState extends State<_RequestCard> {
                 uid,
                 sourceEntryId: doc['creditSourceEntryId'] as String?,
                 amount: credits,
+                childId: UserService.walletChildId(
+                    doc.data() as Map<String, dynamic>?),
               ));
             }
           }

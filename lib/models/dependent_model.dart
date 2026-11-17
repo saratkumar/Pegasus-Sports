@@ -1,10 +1,15 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'user_model.dart';
 
 /// A child (under 18) managed by a parent/guardian account, stored at
-/// users/{parentUid}/dependents/{id}. Children never sign in themselves —
-/// the parent books on their behalf, and bookings stay under the parent's
-/// `userId` (credits, history and refunds all keep working unchanged) with
-/// `attendeeId`/`attendeeName` recording who actually attends.
+/// users/{parentUid}/dependents/{id}. Bookings for the child stay under the
+/// parent's `userId` with `attendeeId`/`attendeeName` recording who
+/// actually attends.
+///
+/// Junior packages are bought by the parent (who pays and gets the receipt)
+/// but assigned to one specific child: they live in this doc's own
+/// [memberships], so only that child's bookings can draw on them — never the
+/// parent's own bookings or a sibling's.
 class DependentModel {
   /// Youngest age accepted for a junior attendee.
   static const minAge = 6;
@@ -32,6 +37,21 @@ class DependentModel {
   // DependentService.add/setVerification — never by toFirestore().
   final String verificationStatus;
 
+  /// Junior packages assigned to this child — same shape and lifecycle
+  /// (active/queued/expired, nightly rollover) as an adult's plans. Written
+  /// only by the purchase flow, credit deduction/refund and admin plan
+  /// edits, never by [toFirestore] (a profile edit must not clobber them).
+  final List<MembershipEntry> memberships;
+
+  /// The child's own email for signing in (optional, set by the parent or
+  /// staff). Once the child is approved, an invitation goes to it; on first
+  /// sign-in a junior account is created and its uid stored in [linkedUid]
+  /// (server-side only — see onDependentWritten / onUserCreated).
+  final String loginEmail;
+  final String? linkedUid;
+
+  bool get hasLogin => linkedUid != null;
+
   const DependentModel({
     this.id,
     required this.name,
@@ -44,7 +64,27 @@ class DependentModel {
     this.consentTermsVersion = consentVersion,
     this.isActive = true,
     this.verificationStatus = 'pending',
+    this.memberships = const [],
+    this.loginEmail = '',
+    this.linkedUid,
   });
+
+  /// Active junior packages whose date window is still open.
+  List<MembershipEntry> get activeMemberships {
+    final now = DateTime.now();
+    return memberships
+        .where((m) => m.isActive && m.endDate.isAfter(now))
+        .toList();
+  }
+
+  /// Junior packages waiting for the current one of the same plan to end.
+  List<MembershipEntry> get queuedMemberships =>
+      memberships.where((m) => m.isQueued).toList()
+        ..sort((a, b) => a.startDate.compareTo(b.startDate));
+
+  /// Credits this child can use right now (active packages only).
+  int get usableCredits => activeMemberships.fold(
+      0, (total, m) => total + (m.creditsRemaining > 0 ? m.creditsRemaining : 0));
 
   /// Age in whole years on [on] (defaults to today).
   int ageOn([DateTime? on]) {
@@ -90,6 +130,11 @@ class DependentModel {
       isActive: data['isActive'] ?? true,
       // Profiles created before verification existed count as pending.
       verificationStatus: data['verificationStatus'] ?? 'pending',
+      memberships: (data['memberships'] as List<dynamic>? ?? [])
+          .map((e) => MembershipEntry.fromMap(e as Map<String, dynamic>))
+          .toList(),
+      loginEmail: data['loginEmail'] as String? ?? '',
+      linkedUid: data['linkedUid'] as String?,
     );
   }
 
@@ -104,6 +149,7 @@ class DependentModel {
           'consentAcceptedAt': Timestamp.fromDate(consentAcceptedAt!),
         'consentTermsVersion': consentTermsVersion,
         'isActive': isActive,
+        'loginEmail': loginEmail.trim().toLowerCase(),
         'updatedAt': FieldValue.serverTimestamp(),
       };
 }

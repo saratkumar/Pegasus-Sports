@@ -151,7 +151,9 @@ class ClassCancellationService {
 
       if (credits > 0) {
         await UserService.refundCredit(uid,
-            sourceEntryId: sourceEntryId, amount: credits);
+            sourceEntryId: sourceEntryId,
+            amount: credits,
+            childId: UserService.walletChildId(data));
       }
 
       unawaited(ConfigService.logActivityEvent(

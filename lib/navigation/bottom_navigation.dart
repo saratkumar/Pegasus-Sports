@@ -17,6 +17,8 @@ import '../screens/admin/class_roster_screen.dart';
 import '../screens/admin/user_management_screen.dart';
 import '../screens/admin/transactions_screen.dart';
 import '../screens/profile/profile_screen.dart';
+import '../screens/junior/junior_plan_screen.dart';
+import '../screens/timetable/classes_screen.dart';
 import '../utils/app_colors.dart';
 
 class BottomNav extends StatefulWidget {
@@ -32,8 +34,7 @@ class _BottomNavState extends State<BottomNav> {
   // null = use real role; set by super admin to preview another role
   String? _viewAs;
 
-  String get _effectiveRole =>
-      _viewAs ?? widget.userModel?.role ?? 'client';
+  String get _effectiveRole => _viewAs ?? widget.userModel?.role ?? 'client';
 
   bool get _isSuperAdmin => widget.userModel?.isSuperAdmin == true;
 
@@ -97,6 +98,19 @@ class _BottomNavState extends State<BottomNav> {
           TrainerHistoryScreen(),
           TrainerRequestsScreen(),
         ];
+      case 'junior':
+        // A child's own login: book themselves, see their bookings and
+        // their junior package — no buying, family or guests.
+        final junior = widget.userModel;
+        if (junior == null || !junior.isJunior) return const [SizedBox()];
+        return [
+          Scaffold(
+            appBar: AppBar(title: const Text('Classes')),
+            body: ClassesScreen(junior: junior),
+          ),
+          BookingsScreen(junior: junior),
+          JuniorPlanScreen(junior: junior),
+        ];
       default:
         return [
           TimetableScreen(userModel: widget.userModel),
@@ -123,8 +137,8 @@ class _BottomNavState extends State<BottomNav> {
           NavigationDestination(
             icon: const Icon(Icons.receipt_long_outlined,
                 color: Color(0xFF666666)),
-            selectedIcon: const Icon(Icons.receipt_long,
-                color: AppColors.primary),
+            selectedIcon:
+                const Icon(Icons.receipt_long, color: AppColors.primary),
             label: compact ? 'Trans' : 'Transactions',
           ),
           NavigationDestination(
@@ -156,6 +170,24 @@ class _BottomNavState extends State<BottomNav> {
             label: 'Requests',
           ),
         ];
+      case 'junior':
+        return const [
+          NavigationDestination(
+            icon: Icon(Icons.calendar_month_outlined, color: Color(0xFF666666)),
+            selectedIcon: Icon(Icons.calendar_month, color: AppColors.primary),
+            label: 'Classes',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.bookmark_border, color: Color(0xFF666666)),
+            selectedIcon: Icon(Icons.bookmark, color: AppColors.primary),
+            label: 'Bookings',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.toll_outlined, color: Color(0xFF666666)),
+            selectedIcon: Icon(Icons.toll, color: AppColors.primary),
+            label: 'My Plan',
+          ),
+        ];
       default:
         return const [
           NavigationDestination(
@@ -171,8 +203,7 @@ class _BottomNavState extends State<BottomNav> {
           NavigationDestination(
             icon:
                 Icon(Icons.card_membership_outlined, color: Color(0xFF666666)),
-            selectedIcon:
-                Icon(Icons.card_membership, color: AppColors.primary),
+            selectedIcon: Icon(Icons.card_membership, color: AppColors.primary),
             label: 'Membership',
           ),
         ];
@@ -186,6 +217,8 @@ class _BottomNavState extends State<BottomNav> {
     switch (widget.userModel?.role) {
       case 'trainer':
         return 'Trainer';
+      case 'junior':
+        return 'Junior';
       case 'admin':
         return widget.userModel?.adminLevel == 'super_admin'
             ? 'Super Admin'
@@ -212,8 +245,7 @@ class _BottomNavState extends State<BottomNav> {
             if (_roleLabel.isNotEmpty) ...[
               const SizedBox(width: 8),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
                   color: _viewAs != null
                       ? Colors.orange.withValues(alpha: 0.15)
@@ -224,8 +256,7 @@ class _BottomNavState extends State<BottomNav> {
                   _roleLabel,
                   style: TextStyle(
                     fontSize: 11,
-                    color:
-                        _viewAs != null ? Colors.orange : AppColors.primary,
+                    color: _viewAs != null ? Colors.orange : AppColors.primary,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
@@ -250,8 +281,7 @@ class _BottomNavState extends State<BottomNav> {
                 onTap: () => Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) =>
-                        ProfileScreen(userModel: widget.userModel!),
+                    builder: (_) => ProfileScreen(userModel: widget.userModel!),
                   ),
                 ),
                 child: Stack(
@@ -279,8 +309,7 @@ class _BottomNavState extends State<BottomNav> {
                           decoration: BoxDecoration(
                             color: AppColors.error,
                             shape: BoxShape.circle,
-                            border: Border.all(
-                                color: AppColors.bg, width: 1.5),
+                            border: Border.all(color: AppColors.bg, width: 1.5),
                           ),
                         ),
                       ),
@@ -298,8 +327,7 @@ class _BottomNavState extends State<BottomNav> {
       body: IndexedStack(index: _index, children: _pages),
       bottomNavigationBar: Container(
         decoration: const BoxDecoration(
-          border:
-              Border(top: BorderSide(color: AppColors.divider, width: 1)),
+          border: Border(top: BorderSide(color: AppColors.divider, width: 1)),
         ),
         child: LayoutBuilder(
           builder: (context, constraints) {
@@ -307,8 +335,7 @@ class _BottomNavState extends State<BottomNav> {
             // Each destination needs roughly 80px to fit its label on one
             // line; below that, swap in shortened labels instead of
             // letting Material wrap them and blow up the bar's height.
-            final compact =
-                constraints.maxWidth / dests.length < 80;
+            final compact = constraints.maxWidth / dests.length < 80;
             return NavigationBar(
               selectedIndex: _index,
               onDestinationSelected: (v) => setState(() => _index = v),
@@ -344,8 +371,7 @@ class _BottomNavState extends State<BottomNav> {
             const SizedBox(height: 6),
             const Text(
                 'Switch perspective to test different role views. Your actual role is not changed.',
-                style: TextStyle(
-                    fontSize: 13, color: AppColors.textSecondary)),
+                style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
             const SizedBox(height: 20),
             ...['admin', 'trainer', 'client'].map((role) {
               final isActive = (_viewAs ?? widget.userModel?.role) == role;
@@ -381,8 +407,8 @@ class _BottomNavState extends State<BottomNav> {
                       : role == 'trainer'
                           ? 'View trainer tools and schedule'
                           : 'Book classes, manage membership',
-                  style: const TextStyle(
-                      fontSize: 11, color: AppColors.textMuted),
+                  style:
+                      const TextStyle(fontSize: 11, color: AppColors.textMuted),
                 ),
                 trailing: isActive
                     ? Icon(Icons.check_circle, color: color, size: 20)

@@ -1,8 +1,8 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
-const { onDocumentCreated } = require("firebase-functions/v2/firestore");
+const { onDocumentCreated, onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { setGlobalOptions } = require("firebase-functions/v2");
 const admin = require("firebase-admin");
-const { Timestamp } = require("firebase-admin/firestore");
+const { Timestamp, FieldValue } = require("firebase-admin/firestore");
 const { buildInvitationEmail } = require("./emailTemplates");
 
 admin.initializeApp();
@@ -123,32 +123,58 @@ async function assertMember(uid) {
     throw new HttpsError("permission-denied",
       "This account is inactive. Please contact the gym to reactivate your membership.");
   }
+  // Minors can't make payments — the parent buys junior packages for them.
+  if (snap.get("role") === "junior") {
+    throw new HttpsError("permission-denied",
+      "Junior accounts can't make payments. Please ask your parent or guardian to buy a package for you.");
+  }
 }
 
-async function assertJuniorEligible(uid, planName) {
+// Junior packages are bought by the parent but assigned to ONE child, whose
+// profile (users/{uid}/dependents/{dependentId}) then holds the package — so
+// only that child's bookings can use it. For a junior plan this requires a
+// dependentId naming an active, staff-approved child of THIS parent aged
+// 6–17, and returns it; for any other plan it returns null (a stray
+// dependentId is ignored, so an adult plan can never land on a child).
+async function assertJuniorEligible(uid, planName, dependentId) {
   const db = admin.firestore();
   const plans = await db.collection("membershipPlans")
     .where("name", "==", planName).limit(1).get();
-  if (plans.empty || plans.docs[0].get("isJunior") !== true) return;
+  if (plans.empty || plans.docs[0].get("isJunior") !== true) return null;
 
-  const children = await db.collection("users").doc(uid)
-    .collection("dependents").where("isActive", "==", true).get();
-  const now = new Date();
-  const rightAge = children.docs.filter((d) => {
-    const dob = d.get("dateOfBirth");
-    if (!dob) return false;
-    const age = ageOn(dob.toDate(), now);
-    return age >= JUNIOR_MIN_AGE && age < JUNIOR_MAX_AGE_EXCLUSIVE;
-  });
+  if (!dependentId || typeof dependentId !== "string") {
+    // App builds from before packages were per-child don't send one.
+    throw new HttpsError("failed-precondition",
+      "Please update the app to buy a junior package for your child.");
+  }
+  const child = await db.collection("users").doc(uid)
+    .collection("dependents").doc(dependentId).get();
+  if (!child.exists || child.get("isActive") === false) {
+    throw new HttpsError("failed-precondition",
+      "Junior packages are for children aged 6–17. Add your child in My Family first.");
+  }
   // Staff must have approved the child (see onDependentCreated) — a
   // self-declared profile alone isn't proof a child exists.
-  if (rightAge.some((d) => d.get("verificationStatus") === "verified")) return;
-  throw new HttpsError(
-    "failed-precondition",
-    rightAge.some((d) => d.get("verificationStatus") !== "rejected")
-      ? "Your child's profile is awaiting approval by our staff. Junior packages unlock once it's approved."
-      : "Junior packages are for children aged 6–17. Add your child in My Family first."
-  );
+  if (child.get("verificationStatus") !== "verified") {
+    throw new HttpsError("failed-precondition",
+      child.get("verificationStatus") === "rejected"
+        ? "This child's profile wasn't approved, so junior packages can't be bought for them. Please contact the gym."
+        : "Your child's profile is awaiting approval by our staff. Junior packages unlock once it's approved.");
+  }
+  const dob = child.get("dateOfBirth");
+  const age = dob ? ageOn(dob.toDate(), new Date()) : -1;
+  if (age < JUNIOR_MIN_AGE || age >= JUNIOR_MAX_AGE_EXCLUSIVE) {
+    throw new HttpsError("failed-precondition",
+      "Junior packages are for children aged 6–17.");
+  }
+  return dependentId;
+}
+
+// Where a purchased plan is stored: the parent's own doc, or — for a
+// junior package — the child it was bought for.
+function walletRef(db, uid, dependentId) {
+  const userRef = db.collection("users").doc(uid);
+  return dependentId ? userRef.collection("dependents").doc(dependentId) : userRef;
 }
 
 // ── onDependentCreated ──────────────────────────────────────────────────────
@@ -184,7 +210,7 @@ exports.onDependentCreated = onDocumentCreated("users/{uid}/dependents/{childId}
     amount: 0,
     status: "pending",
     note: `Date of birth: ${dobText} · ${child.relationship || "Parent"}`,
-    createdAt: admin.firestore.Timestamp.now(),
+    createdAt: Timestamp.now(),
   });
 
   // Names are parent-typed text going into an HTML email — escape them.
@@ -256,7 +282,10 @@ function preparePayment(request) {
 exports.createPaymentIntent = onCall({ secrets: ["STRIPE_SECRET_KEY", "STRIPE_PUBLISHABLE_KEY"] }, async (request) => {
   const { netAmount, currency, planName, feeAmount, grossAmount, metadata } = preparePayment(request);
   await assertMember(request.auth.uid);
-  await assertJuniorEligible(request.auth.uid, planName);
+  const dependentId = await assertJuniorEligible(request.auth.uid, planName, request.data?.dependentId);
+  // Carried on the PaymentIntent so confirmMembershipPayment knows which
+  // child the package is for without trusting the client a second time.
+  if (dependentId) metadata.dependentId = dependentId;
 
   const publishableKey = process.env.STRIPE_PUBLISHABLE_KEY;
   if (!publishableKey) {
@@ -293,7 +322,8 @@ const CHECKOUT_RETURN_PAGE = "https://psas-shop.web.app/checkout-complete.html";
 exports.createCheckoutSession = onCall({ secrets: ["STRIPE_SECRET_KEY"] }, async (request) => {
   const { netAmount, currency, planName, feeAmount, grossAmount, metadata } = preparePayment(request);
   await assertMember(request.auth.uid);
-  await assertJuniorEligible(request.auth.uid, planName);
+  const dependentId = await assertJuniorEligible(request.auth.uid, planName, request.data?.dependentId);
+  if (dependentId) metadata.dependentId = dependentId;
 
   const stripe = getStripe();
   const session = await stripe.checkout.sessions.create({
@@ -375,9 +405,9 @@ function buildQueuedOrActiveMembership(db, existingMemberships, { planName, cred
     credits,
     creditsRemaining: credits,
     status,
-    startDate: admin.firestore.Timestamp.fromDate(startDate),
-    endDate: admin.firestore.Timestamp.fromDate(endDate),
-    purchasedAt: admin.firestore.Timestamp.now(),
+    startDate: Timestamp.fromDate(startDate),
+    endDate: Timestamp.fromDate(endDate),
+    purchasedAt: Timestamp.now(),
   };
 }
 
@@ -421,32 +451,42 @@ exports.confirmMembershipPayment = onCall({ secrets: ["STRIPE_SECRET_KEY"] }, as
 
   const uid = request.auth.uid;
   const db = admin.firestore();
-  const userRef = db.collection("users").doc(uid);
+  // netAmount/feeAmount/cardRegion/cardBrand/dependentId were set
+  // server-side in createPaymentIntent, so reading them back off the
+  // verified PaymentIntent's metadata is trusted — not client-supplied here.
+  const meta = paymentIntent.metadata || {};
+  if (meta.userId && meta.userId !== uid) {
+    throw new HttpsError("permission-denied", "This payment belongs to another account.");
+  }
+  // A junior package goes onto the child it was bought for (validated when
+  // the PaymentIntent was created).
+  const dependentId = meta.dependentId || null;
+  const userRef = walletRef(db, uid, dependentId);
 
   // Transactional (not a bare batch) since queueing vs. immediate
-  // activation depends on reading the user's current membership chain.
+  // activation depends on reading the current membership chain.
   await db.runTransaction(async (tx) => {
     const userSnap = await tx.get(userRef);
+    if (!userSnap.exists) {
+      throw new HttpsError("failed-precondition", "Account or child profile not found.");
+    }
     const existing = userSnap.data()?.memberships || [];
     const membership = buildQueuedOrActiveMembership(db, existing, { planName, credits, validityDays });
 
     tx.update(userRef, {
-      memberships: admin.firestore.FieldValue.arrayUnion(membership),
+      memberships: FieldValue.arrayUnion(membership),
     });
 
-    // netAmount/feeAmount/cardRegion/cardBrand were set server-side in
-    // createPaymentIntent, so reading them back off the verified
-    // PaymentIntent's metadata is trusted — not client-supplied here.
-    const meta = paymentIntent.metadata || {};
     tx.set(paymentsRef.doc(), {
       userId: uid,
+      ...(dependentId && { dependentId }),
       paymentIntentId,
       planName,
       amount: paymentIntent.amount / 100,
       currency: paymentIntent.currency,
       credits,
       status: "succeeded",
-      createdAt: admin.firestore.Timestamp.now(),
+      createdAt: Timestamp.now(),
       ...(meta.netAmount != null && { netAmount: Number(meta.netAmount) }),
       ...(meta.feeAmount != null && { feeAmount: Number(meta.feeAmount) }),
       ...(meta.cardRegion != null && { cardRegion: meta.cardRegion }),
@@ -499,12 +539,12 @@ exports.redeemFreeMembership = onCall(async (request) => {
     throw new HttpsError("invalid-argument", "Missing required fields.");
   }
   await assertMember(request.auth.uid);
-  await assertJuniorEligible(request.auth.uid, planName);
+  const dependentId = await assertJuniorEligible(request.auth.uid, planName, request.data?.dependentId);
 
   const db = admin.firestore();
   const uid = request.auth.uid;
   const couponRef = db.collection("coupons").doc(couponCode.trim().toUpperCase());
-  const userRef = db.collection("users").doc(uid);
+  const userRef = walletRef(db, uid, dependentId);
 
   await db.runTransaction(async (tx) => {
     const [couponSnap, userSnap] = await Promise.all([tx.get(couponRef), tx.get(userRef)]);
@@ -525,18 +565,19 @@ exports.redeemFreeMembership = onCall(async (request) => {
       throw new HttpsError("failed-precondition", "This coupon has reached its redemption limit.");
     }
 
-    const nowTs = admin.firestore.Timestamp.now();
+    const nowTs = Timestamp.now();
     const existing = userSnap.data()?.memberships || [];
     const membership = buildQueuedOrActiveMembership(db, existing, { planName, credits, validityDays });
 
     tx.update(userRef, {
-      memberships: admin.firestore.FieldValue.arrayUnion(membership),
+      memberships: FieldValue.arrayUnion(membership),
     });
     tx.update(couponRef, {
-      redeemedCount: admin.firestore.FieldValue.increment(1),
+      redeemedCount: FieldValue.increment(1),
     });
     tx.set(db.collection("payments").doc(), {
       userId: uid,
+      ...(dependentId && { dependentId }),
       paymentIntentId: `coupon_${couponSnap.id}_${Date.now()}`,
       planName,
       amount: 0,
@@ -561,6 +602,101 @@ const APPS_SCRIPT_ALLOWED_ACTIONS = new Set([
   "record_transaction",
   "get_transactions",
 ]);
+
+// ── onDependentWritten: a child's own login ────────────────────────────────
+// A parent (or staff) can give a child profile a loginEmail. Once the child
+// is approved, active and 6–17, an invitation goes to that email (and the
+// invitation email via onInvitationCreated); signing in with it creates a
+// junior account linked to this profile (see onUserCreated). If the child
+// is removed, rejected, ages out, or the email is cleared/changed, the
+// pending invitation is withdrawn and an already-linked junior account is
+// deactivated — the profile, packages and history stay, and restoring the
+// same email reactivates the same account.
+exports.onDependentWritten = onDocumentWritten("users/{uid}/dependents/{childId}", async (event) => {
+  const before = event.data?.before?.data() || null;
+  const after = event.data?.after?.data() || null;
+  const { uid, childId } = event.params;
+  const db = admin.firestore();
+  const norm = (v) => String(v || "").trim().toLowerCase();
+
+  const oldEmail = norm(before?.loginEmail);
+  const newEmail = after ? norm(after.loginEmail) : "";
+  const dob = after?.dateOfBirth?.toDate?.();
+  const age = dob ? ageOn(dob, new Date()) : -1;
+  const wantsLogin = !!after && after.isActive !== false &&
+    after.verificationStatus === "verified" && newEmail.includes("@") &&
+    age >= JUNIOR_MIN_AGE && age < JUNIOR_MAX_AGE_EXCLUSIVE;
+
+  // Withdraw an unused invitation that was issued for THIS child.
+  async function withdrawInvite(email) {
+    if (!email) return;
+    const ref = db.collection("invitations").doc(email);
+    const inv = await ref.get();
+    if (inv.exists && inv.get("dependentId") === childId && inv.get("parentUid") === uid) {
+      await ref.delete();
+    }
+  }
+  async function setJuniorActive(juniorUid, active) {
+    const ref = db.collection("users").doc(juniorUid);
+    const snap = await ref.get();
+    if (snap.exists && snap.get("isActive") !== active) await ref.update({ isActive: active });
+  }
+
+  if (oldEmail && oldEmail !== newEmail) await withdrawInvite(oldEmail);
+
+  const linkedUid = after?.linkedUid || null;
+  if (linkedUid) {
+    const linked = await db.collection("users").doc(linkedUid).get();
+    const linkedEmail = norm(linked.get("email"));
+    if (!wantsLogin || linkedEmail !== newEmail) {
+      await setJuniorActive(linkedUid, false);
+      // Email changed to a different address: that is a new login, so the
+      // old account stays deactivated and the new email is invited below.
+      if (wantsLogin && linkedEmail !== newEmail) {
+        await event.data.after.ref.update({ linkedUid: FieldValue.delete() });
+      } else {
+        return;
+      }
+    } else {
+      await setJuniorActive(linkedUid, true);
+      return;
+    }
+  }
+
+  if (!wantsLogin) {
+    await withdrawInvite(newEmail);
+    return;
+  }
+
+  // Already invited for this child — nothing to do (avoids re-sending).
+  const invRef = db.collection("invitations").doc(newEmail);
+  const inv = await invRef.get();
+  if (inv.exists && inv.get("dependentId") === childId) return;
+  if (inv.exists) {
+    // Someone else's invitation already uses this email.
+    await event.data.after.ref.update({ loginEmailStatus: "email-in-use" });
+    return;
+  }
+  const existing = await db.collection("users").where("email", "==", newEmail).limit(1).get();
+  if (!existing.empty) {
+    await event.data.after.ref.update({ loginEmailStatus: "email-in-use" });
+    return;
+  }
+
+  await invRef.set({
+    email: newEmail,
+    name: after.name || "",
+    phone: "",
+    role: "junior",
+    parentUid: uid,
+    dependentId: childId,
+    initialCredits: 0,
+    createdAt: Timestamp.now(),
+  });
+  if (after.loginEmailStatus) {
+    await event.data.after.ref.update({ loginEmailStatus: FieldValue.delete() });
+  }
+});
 
 // ── onInvitationCreated: email the invited person ──────────────────────────
 // Sign-up is invite-only, so without this an invited person has no way to
@@ -595,6 +731,16 @@ exports.onInvitationCreated = onDocumentCreated("invitations/{email}", async (ev
 exports.onUserCreated = onDocumentCreated("users/{uid}", async (event) => {
   const created = event.data?.data();
   if (!created || created.importedPending) return;
+
+  // A child's first sign-in: record which account is theirs on the child
+  // profile (the junior account can't write the parent's data itself).
+  if (created.role === "junior" && created.parentUid && created.dependentId) {
+    await admin.firestore().collection("users").doc(created.parentUid)
+      .collection("dependents").doc(created.dependentId)
+      .update({ linkedUid: event.params.uid, linkedAt: Timestamp.now() })
+      .catch((e) => console.error("Could not link junior account", e));
+    return;
+  }
   const email = String(created.email || "").trim().toLowerCase();
   if (!email) return;
 

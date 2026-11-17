@@ -376,7 +376,8 @@ class _TrainerHomeScreenState extends State<TrainerHomeScreen> {
 
     final me = FirebaseAuth.instance.currentUser!;
     final bookingRef = FirebaseFirestore.instance.collection('bookings').doc();
-    await UserService.deductCreditAndWrite(selected.uid, (tx, sourceEntryId) {
+    await UserService.deductCreditAndWrite(selected.uid,
+        (tx, sourceEntryId, _) {
       tx.set(bookingRef, {
         'userId': selected.uid,
         'classId': cls.effectiveId,

@@ -152,6 +152,19 @@ const str = (s) => ({ stringValue: s });
   }
   console.log(`  ${m.email.padEnd(18)} ${'client'.padEnd(8)} ${m.credits} credits (imported from Glofox, no invitation)`);
   console.log(`  any other email    refused ("isn't registered with PSAS")`);
+
+  // Card payments are off in test mode, so a 100%-off coupon is the way to
+  // "buy" a plan locally — e.g. a junior package for a child.
+  await writeEmulator('coupons', 'TESTFREE', {
+    code: str('TESTFREE'),
+    discountType: str('percent'),
+    value: { doubleValue: 100 },
+    isActive: { booleanValue: true },
+    redeemedCount: { integerValue: '0' },
+  });
+  console.log('\nCoupon TESTFREE: 100% off any plan (card payments are off in test mode).');
+  console.log('Child logins: as client@test.com add a child in My Family with a login email (e.g. kid@test.com),');
+  console.log('approve the child as admin@test.com, then sign in with that email in another window.');
   console.log('\nDone. Production was only read; everything was written to the local emulator.');
 })().catch((e) => {
   console.error(e.message);

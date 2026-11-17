@@ -157,6 +157,13 @@ class UserModel {
   /// Missing field = active (every account before this flag existed).
   final bool isActive;
 
+  /// Junior accounts (role 'junior'): a child's own login, linked to their
+  /// profile at users/{parentUid}/dependents/{dependentId}. Bookings they
+  /// make stay under the parent's account with the child as attendee, and
+  /// only that child's junior packages pay for them.
+  final String? parentUid;
+  final String? dependentId;
+
   UserModel({
     required this.uid,
     required this.email,
@@ -172,9 +179,13 @@ class UserModel {
     this.coachPhotoUrl,
     this.coachBio,
     this.isActive = true,
+    this.parentUid,
+    this.dependentId,
   });
 
   bool get isClient => role == 'client';
+  bool get isJunior =>
+      role == 'junior' && parentUid != null && dependentId != null;
   bool get isTrainer => role == 'trainer';
   bool get isAdmin => role == 'admin';
   bool get isSuperAdmin => role == 'admin' && adminLevel == 'super_admin';
@@ -249,6 +260,8 @@ class UserModel {
       coachPhotoUrl: data['coachPhotoUrl'] as String?,
       coachBio: data['coachBio'] as String?,
       isActive: data['isActive'] != false,
+      parentUid: data['parentUid'] as String?,
+      dependentId: data['dependentId'] as String?,
     );
   }
 

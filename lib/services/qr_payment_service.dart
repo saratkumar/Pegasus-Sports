@@ -53,6 +53,8 @@ class QrPaymentService {
     required double amount,
     required int validityDays,
     String note = '',
+    String? dependentId,
+    String? dependentName,
   }) async {
     final user = await UserService.getCurrentUser();
     if (user == null) throw Exception('Not signed in');
@@ -67,13 +69,15 @@ class QrPaymentService {
       validityDays: validityDays,
       note: note,
       createdAt: DateTime.now(),
+      dependentId: dependentId,
+      dependentName: dependentName,
     );
     await _requestsCol.add(request.toFirestore());
 
     await RequestNotificationService.notifyAdminsOfNewRequest(
       typeLabel: 'QR Payment Confirmation',
       requesterName: user.name,
-      summary: '$planName · $amount SGD',
+      summary: '${request.planLabel} · $amount SGD',
     );
   }
 
@@ -107,6 +111,7 @@ class QrPaymentService {
       planName: req.planName,
       credits: req.credits,
       validityDays: req.validityDays,
+      childId: req.dependentId,
     );
 
     final txRef = FirebaseFirestore.instance.collection('transactions').doc();
@@ -122,6 +127,8 @@ class QrPaymentService {
       'clientName': req.userName,
       'clientEmail': req.userEmail,
       'planName': req.planName,
+      if (req.dependentId != null) 'dependentId': req.dependentId,
+      if (req.dependentName != null) 'dependentName': req.dependentName,
       'credits': req.credits,
       'amount': req.amount,
       'currency': req.currency,
@@ -135,7 +142,7 @@ class QrPaymentService {
       paymentIntentId: internalRef,
       clientName: req.userName,
       clientEmail: req.userEmail,
-      planName: req.planName,
+      planName: req.planLabel,
       credits: req.credits,
       amount: req.amount,
       currency: req.currency,
