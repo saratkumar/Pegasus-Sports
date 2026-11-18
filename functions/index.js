@@ -852,12 +852,42 @@ exports.callAppsScript = onCall({ secrets: ["APPS_SCRIPT_URL"] }, async (request
     throw new HttpsError("unavailable", `Apps Script returned ${res.status}`);
   }
   const text = await res.text();
+  let data;
   try {
-    return { data: JSON.parse(text) };
+    data = JSON.parse(text);
   } catch {
     return { data: text };
   }
+  if (action === "get_activity_log") data = fixSheetSessionTimes(data);
+  return { data };
 });
+
+// Google Sheets turns a logged session time like "7:00 PM" into a time value,
+// which the Apps Script returns as a date on Sheets' day zero
+// ("1899-12-30T12:04:35.000Z"). App rosters match bookings to classes by that
+// text, so every app version — including ones already in the stores — got
+// extra "1899" sessions. Convert those back to the "h:mm AM/PM" the app
+// writes. Asia/Singapore (the Sheet's zone) includes its 1899 offset, so
+// 12:04:35Z comes back as exactly 7:00 PM.
+const SHEETS_DAY_ZERO_TIME = /^1899-12-3[01]T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
+const sessionTimeFormat = new Intl.DateTimeFormat("en-US", {
+  timeZone: "Asia/Singapore",
+  hour: "numeric",
+  minute: "2-digit",
+  hour12: true,
+});
+
+function fixSheetSessionTimes(data) {
+  const fixRow = (row) => {
+    if (!row || typeof row !== "object") return row;
+    const t = row.sessionTime;
+    if (typeof t !== "string" || !SHEETS_DAY_ZERO_TIME.test(t)) return row;
+    return { ...row, sessionTime: sessionTimeFormat.format(new Date(t)).replace(/ /g, " ") };
+  };
+  if (Array.isArray(data)) return data.map(fixRow);
+  if (data && Array.isArray(data.data)) return { ...data, data: data.data.map(fixRow) };
+  return data;
+}
 
 // ── uploadCoachPhoto ─────────────────────────────────────────────────────────
 // Admin uploads a trainer/admin profile photo from the app. The image is
