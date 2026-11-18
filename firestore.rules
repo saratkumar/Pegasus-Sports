@@ -132,6 +132,21 @@ service cloud.firestore {
           !('adminLevel' in request.resource.data) &&
           !request.resource.data.keys().hasAny(['parentUid', 'dependentId']);
       }
+      // TEMPORARY — remove once app 1.0.3+ is live in both stores.
+      // App builds before 1.0.3 don't send `importedFrom`, so imported Glofox
+      // members signing up from the old store app were refused. This lets
+      // them create a plain empty client profile when their email is on the
+      // importedEmails lookup list (written server-side, one doc per pending
+      // import); onUserCreated then moves their plans/credits/children across
+      // by email exactly as for new builds.
+      function legacyImportedSignUp() {
+        return exists(/databases/$(database)/documents/importedEmails/$(myEmail())) &&
+          request.resource.data.get('role', 'client') == 'client' &&
+          !('adminLevel' in request.resource.data) &&
+          !request.resource.data.keys().hasAny(['parentUid', 'dependentId', 'adminCreditGrant']) &&
+          request.resource.data.get('credits', 0) == 0 &&
+          request.resource.data.get('memberships', []) == [];
+      }
       allow create: if isSignedIn() && request.auth.uid == uid &&
         myEmail() != '' &&
         request.auth.token.get('email_verified', false) == true &&
@@ -139,6 +154,7 @@ service cloud.firestore {
         (
           (exists(inviteRef()) && invitedRoleOk()) ||
           claimsImportedDoc() ||
+          legacyImportedSignUp() ||
           isDesignatedSuperAdmin()
         );
       allow update: if isSignedIn() && (
