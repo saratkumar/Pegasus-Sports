@@ -540,8 +540,10 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
   }
 
   /// Whether the form is in "different times on different days" mode.
+  /// Available when creating a class and when editing a whole class (not a
+  /// single date from the Roster).
   bool get _perDayMode =>
-      widget.existing == null && _occurrence == 'weekly' && _perDayTimes;
+      !_sessionOnly && _occurrence == 'weekly' && _perDayTimes;
 
   List<String> get _orderedSelectedDays =>
       _weekdayOrder.where(_selectedDays.contains).toList();
@@ -794,6 +796,7 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
         ? perDayClasses.first
         : buildClass(_startTime.text.trim(), _duration.text.trim());
 
+    var addedOnEdit = 0;
     try {
       final isEdit = widget.existing?.id != null;
       final oldCoach = widget.existing?.coach ?? '';
@@ -807,7 +810,34 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
           edited: cls,
         );
       } else if (isEdit) {
-        await ClassService.updateClass(widget.existing!.id!, cls);
+        // The edited class keeps its id (and so its bookings). Any extra
+        // time slots added while editing become new classes with the same
+        // details, exactly as when creating. In per-day mode it takes the
+        // slot that still starts at its current time, if there is one.
+        final ClassModel kept;
+        final extras = <ClassModel>[];
+        if (perDay) {
+          var keepIdx = perDayClasses
+              .indexWhere((c) => c.startTime == widget.existing!.startTime);
+          if (keepIdx == -1) keepIdx = 0;
+          kept = perDayClasses[keepIdx];
+          for (var i = 0; i < perDayClasses.length; i++) {
+            if (i != keepIdx) extras.add(perDayClasses[i]);
+          }
+        } else {
+          kept = cls;
+          for (final slot in _extraSlots) {
+            extras.add(buildClass(
+              _formatTimeOfDay(slot.start),
+              _formatDurationMinutes(_minutesBetween(slot.start, slot.end)),
+            ));
+          }
+        }
+        await ClassService.updateClass(widget.existing!.id!, kept);
+        for (final c in extras) {
+          await ClassService.createClass(c);
+        }
+        addedOnEdit = extras.length;
         if (coachChanged) {
           await Future.wait([
             NotificationService.showTrainerRemoved(cls.mode),
@@ -836,7 +866,9 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
             _sessionOnly
                 ? 'Updated ${_fmtSessionDate(widget.sessionDate!)} only'
                 : widget.existing != null
-                    ? 'Class updated'
+                    ? addedOnEdit == 0
+                        ? 'Class updated'
+                        : 'Class updated, and $addedOnEdit new time slot${addedOnEdit == 1 ? '' : 's'} added'
                     : created == 1
                         ? 'Class created'
                         : '$created classes created (one per time slot)');
@@ -981,7 +1013,7 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
                               fontSize: 12, color: AppColors.textMuted)),
                     ]),
                   ],
-                  if (widget.existing == null && !_perDayMode) ...[
+                  if (!_sessionOnly && !_perDayMode) ...[
                     const SizedBox(height: 8),
                     _extraSlotsSection(),
                   ],
@@ -1021,7 +1053,7 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
                               }
                             }),
                           ),
-                          if (widget.existing == null) ...[
+                          if (!_sessionOnly) ...[
                             SwitchListTile(
                               contentPadding: EdgeInsets.zero,
                               value: _perDayTimes,
