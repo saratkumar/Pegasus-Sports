@@ -354,6 +354,10 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
   List<UserModel> _coaches = [];
   Map<String, String> _typeImages = {};
   List<MembershipPlanModel> _plans = [];
+  // Editing a whole class: the other active classes with the same name and
+  // coach — i.e. its other time slots — shown so the admin can see slots
+  // added earlier (each slot is a separate class).
+  List<ClassModel> _siblings = [];
   late Set<String> _selectedPlanNames;
 
   static const _weekdayOrder = [
@@ -417,6 +421,7 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
       _endTimeOfDay = _addMinutes(_startTimeOfDay!, durationMinutes);
     }
     _loadData();
+    _loadSiblings();
   }
 
   // ── Time helpers ─────────────────────────────────────────────────────────
@@ -632,6 +637,32 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
     });
   }
 
+  /// Same class (name + coach + recurrence), other time slot, still active.
+  static bool _isSibling(ClassModel a, ClassModel b) =>
+      a.id != b.id &&
+      a.isActive &&
+      a.mode.trim().toLowerCase() == b.mode.trim().toLowerCase() &&
+      a.coach.trim().toLowerCase() == b.coach.trim().toLowerCase() &&
+      a.occurrence == b.occurrence;
+
+  Future<void> _loadSiblings() async {
+    final existing = widget.existing;
+    if (existing == null || _sessionOnly) return;
+    try {
+      final all = await ClassService.getClasses();
+      int mins(ClassModel c) {
+        final t = _parseTimeOfDay(c.startTime);
+        return t == null ? 24 * 60 : _toMinutes(t);
+      }
+
+      final siblings = all.where((c) => _isSibling(c, existing)).toList()
+        ..sort((a, b) => mins(a).compareTo(mins(b)));
+      if (mounted) setState(() => _siblings = siblings);
+    } catch (_) {
+      // Informational only — the form works without it.
+    }
+  }
+
   Future<void> _loadData() async {
     try {
       final results = await Future.wait([
@@ -797,6 +828,7 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
         : buildClass(_startTime.text.trim(), _duration.text.trim());
 
     var addedOnEdit = 0;
+    var skippedOnEdit = 0;
     try {
       final isEdit = widget.existing?.id != null;
       final oldCoach = widget.existing?.coach ?? '';
@@ -834,10 +866,27 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
           }
         }
         await ClassService.updateClass(widget.existing!.id!, kept);
+        // Never create a second copy of a slot this class already has —
+        // saving the same form twice must not duplicate classes.
+        final current = await ClassService.getClasses();
+        bool alreadyExists(ClassModel c) => current.any((o) =>
+            o.id != widget.existing!.id &&
+            o.isActive &&
+            o.mode.trim().toLowerCase() == c.mode.trim().toLowerCase() &&
+            o.coach.trim().toLowerCase() == c.coach.trim().toLowerCase() &&
+            o.occurrence == c.occurrence &&
+            o.startTime == c.startTime &&
+            o.duration == c.duration &&
+            o.day == c.day &&
+            o.specificDate == c.specificDate);
         for (final c in extras) {
+          if (alreadyExists(c)) {
+            skippedOnEdit++;
+            continue;
+          }
           await ClassService.createClass(c);
+          addedOnEdit++;
         }
-        addedOnEdit = extras.length;
         if (coachChanged) {
           await Future.wait([
             NotificationService.showTrainerRemoved(cls.mode),
@@ -866,9 +915,13 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
             _sessionOnly
                 ? 'Updated ${_fmtSessionDate(widget.sessionDate!)} only'
                 : widget.existing != null
-                    ? addedOnEdit == 0
-                        ? 'Class updated'
-                        : 'Class updated, and $addedOnEdit new time slot${addedOnEdit == 1 ? '' : 's'} added'
+                    ? [
+                        'Class updated',
+                        if (addedOnEdit > 0)
+                          '$addedOnEdit new time slot${addedOnEdit == 1 ? '' : 's'} added',
+                        if (skippedOnEdit > 0)
+                          '$skippedOnEdit already existed',
+                      ].join(' · ')
                     : created == 1
                         ? 'Class created'
                         : '$created classes created (one per time slot)');
@@ -1194,6 +1247,32 @@ class _ClassFormScreenState extends State<_ClassFormScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (_siblings.isNotEmpty) ...[
+          const Text(
+            'Other times already set up for this class',
+            style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              for (final c in _siblings)
+                Chip(
+                  avatar: const Icon(Icons.event_available, size: 16),
+                  label: Text(
+                      '${c.occurrence == 'weekly' ? '${c.day.split(',').map((d) => d.trim().length >= 3 ? d.trim().substring(0, 3) : d.trim()).join(', ')} · ' : ''}'
+                      '${c.startTime}${c.duration.isNotEmpty ? ' (${c.duration})' : ''}'),
+                ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Each is its own class — open it from the Classes list to change it.',
+            style: TextStyle(fontSize: 11, color: AppColors.textMuted),
+          ),
+          const SizedBox(height: 8),
+        ],
         if (_extraSlots.isNotEmpty) ...[
           const Text(
             'Also at',
